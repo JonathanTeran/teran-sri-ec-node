@@ -2,6 +2,27 @@
   "name": "@amephia/sri-ec",
   "version": "0.1.0",
   "description": "Cliente Node.js/TypeScript para facturación electrónica del SRI Ecuador (port de teran-sri-ec).",
+  "keywords": [
+    "sri",
+    "ecuador",
+    "facturacion-electronica",
+    "xades",
+    "comprobantes-electronicos",
+    "factura",
+    "e-invoicing",
+    "sri-ecuador",
+    "firma-electronica",
+    "p12"
+  ],
+  "homepage": "https://github.com/JonathanTeran/teran-sri-ec-node#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/JonathanTeran/teran-sri-ec-node.git",
+    "directory": "packages/sri-ec"
+  },
+  "bugs": {
+    "url": "https://github.com/JonathanTeran/teran-sri-ec-node/issues"
+  },
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
@@ -19,7 +40,10 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "src",
+    "LICENSE.md",
+    "README.md"
   ],
   "sideEffects": false,
   "engines": {
@@ -43,5 +67,8 @@
     "tsup": "^8.5.1",
     "vitest": "^3.2.7",
     "@types/node-forge": "^1.3.14"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

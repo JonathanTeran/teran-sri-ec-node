@@ -1,8 +1,11 @@
 # @amephia/nestjs-sri-ec
 
-Módulo de inyección de dependencias para **NestJS** sobre [`@amephia/sri-ec`](../sri-ec). Wiring puro (`SriModule.forRoot()`/`forRootAsync()` + `SriService`) — sin lógica de negocio propia; cada método de `SriService` delega íntegramente en `SriClient`/`BatchEmitter` del núcleo.
+[![npm version](https://img.shields.io/npm/v/%40amephia%2Fnestjs-sri-ec.svg?style=flat-square)](https://www.npmjs.com/package/@amephia/nestjs-sri-ec) [![Licencia MIT](https://img.shields.io/badge/license-MIT-brightgreen.svg?style=flat-square)](https://github.com/JonathanTeran/teran-sri-ec-node/blob/main/LICENSE.md) [![Node.js](https://img.shields.io/badge/node-%3E%3D%2020-339933.svg?style=flat-square&logo=node.js&logoColor=white)](https://nodejs.org/)
 
-Este paquete forma parte del monorepo [`teran-sri-ec-node`](../..). La documentación completa (instalación, ejemplos, flujo, troubleshooting) vive en el **[README de la raíz](../../README.md)**.
+Módulo de inyección de dependencias para **NestJS** sobre [`@amephia/sri-ec`](https://www.npmjs.com/package/@amephia/sri-ec), la librería de **Facturación Electrónica del SRI Ecuador**. Wiring puro (`SriModule.forRoot()` / `forRootAsync()` + `SriService`), sin lógica de negocio propia: cada método de `SriService` delega íntegramente en el núcleo.
+
+- 📖 **Documentación completa:** <https://github.com/JonathanTeran/teran-sri-ec-node>
+- 🐛 **Reportar un problema:** <https://github.com/JonathanTeran/teran-sri-ec-node/issues>
 
 ## Instalación
 
@@ -10,11 +13,14 @@ Este paquete forma parte del monorepo [`teran-sri-ec-node`](../..). La documenta
 npm install @amephia/sri-ec @amephia/nestjs-sri-ec
 ```
 
-Peer dependencies: `@amephia/sri-ec` y `@nestjs/common@^10 || ^11`.
+Requiere **Node.js >= 20**. Peer dependencies: `@amephia/sri-ec@^0.1.0` y `@nestjs/common@^10 || ^11`.
 
-## Uso mínimo
+## Uso
+
+### Registro del módulo
 
 ```ts
+import { readFileSync } from 'node:fs';
 import { Module } from '@nestjs/common';
 import { Ambiente } from '@amephia/sri-ec';
 import { SriModule } from '@amephia/nestjs-sri-ec';
@@ -23,15 +29,79 @@ import { SriModule } from '@amephia/nestjs-sri-ec';
   imports: [
     SriModule.forRoot({
       ambiente: Ambiente.Pruebas,
-      certificate: { p12: p12Bytes, password: 'clave-del-p12' },
+      certificate: {
+        p12: readFileSync('firma.p12'),
+        password: process.env['SRI_P12_PASSWORD']!,
+      },
+      // isGlobal: true,   // opcional, false por defecto
+      // validate: false,  // opcional, salta assertValid() antes de firmar
     }),
   ],
 })
 export class AppModule {}
 ```
 
-Inyecte `SriService` (o el token `SRI_CLIENT` para el `SriClient` crudo) donde lo necesite. Ver el [README de la raíz](../../README.md) para la referencia completa, incluyendo `forRootAsync()` y `createBatch()`.
+`certificate` acepta también un `Certificate` ya cargado con `loadCertificate()`. El `.p12` y su contraseña se consumen al construir el cliente y **nunca quedan registrados en el contenedor de Nest**.
+
+### Uso en un servicio
+
+```ts
+import { Injectable } from '@nestjs/common';
+import type { Factura } from '@amephia/sri-ec';
+import { SriService } from '@amephia/nestjs-sri-ec';
+
+@Injectable()
+export class FacturacionService {
+  constructor(private readonly sri: SriService) {}
+
+  emitir(factura: Factura) {
+    return this.sri.emit(factura); // delega en SriClient.emit()
+  }
+
+  firmarSinEnviar(factura: Factura) {
+    return this.sri.prepare(factura); // { claveAcceso, signedXml }
+  }
+
+  lote() {
+    return this.sri.createBatch(); // BatchEmitter con el ambiente/transport del módulo
+  }
+}
+```
+
+### Configuración asíncrona
+
+```ts
+import { ConfigModule, ConfigService } from '@nestjs/config';
+import { Ambiente, loadCertificate } from '@amephia/sri-ec';
+import { SriModule } from '@amephia/nestjs-sri-ec';
+
+SriModule.forRootAsync({
+  imports: [ConfigModule],
+  inject: [ConfigService],
+  useFactory: (config: ConfigService) => ({
+    ambiente: config.getOrThrow<Ambiente>('SRI_AMBIENTE'),
+    certificate: loadCertificate(
+      config.getOrThrow<Buffer>('SRI_P12'),
+      config.getOrThrow<string>('SRI_P12_PASSWORD'),
+    ),
+  }),
+});
+```
+
+Mismo patrón que `ConfigModule.forRootAsync` / `TypeOrmModule.forRootAsync`: por el encapsulamiento estándar de Nest, la `useFactory` solo ve los providers declarados en sus propios `imports`.
+
+## API
+
+| Miembro | Descripción |
+|---|---|
+| `SriModule.forRoot(options)` | Registro síncrono. |
+| `SriModule.forRootAsync({ imports?, inject?, useFactory, isGlobal? })` | Registro asíncrono. |
+| `SriService` | Fachada inyectable: `emit`, `prepare`, `authorize`, `sign`, `createBatch`, y el `client` crudo. |
+| `SRI_CLIENT` | Token del `SriClient` configurado, por si se prefiere inyectarlo directamente. |
+| `SRI_MODULE_OPTIONS` | Token de la configuración no sensible (`ambiente`, `transport`, `validate`). |
+
+La referencia completa de los comprobantes, la firma y el envío masivo está en el [README del repositorio](https://github.com/JonathanTeran/teran-sri-ec-node#readme).
 
 ## Licencia
 
-MIT — ver [LICENSE.md](../../LICENSE.md).
+MIT © Jonathan Terán — ver [LICENSE.md](./LICENSE.md).
