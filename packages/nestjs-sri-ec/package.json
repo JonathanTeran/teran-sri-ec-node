@@ -1,0 +1,50 @@
+{
+  "name": "@amephia/nestjs-sri-ec",
+  "version": "0.1.0",
+  "description": "Módulo NestJS de integración con @amephia/sri-ec para facturación electrónica del SRI Ecuador.",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "sideEffects": false,
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT",
+  "author": "Jonathan Terán",
+  "scripts": {
+    "build": "tsup",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@amephia/sri-ec": "*"
+  },
+  "peerDependencies": {
+    "@amephia/sri-ec": "*",
+    "@nestjs/common": "^10 || ^11"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "tsup": "^8.5.1",
+    "vitest": "^3.2.7",
+    "@nestjs/common": "^11.1.28",
+    "@nestjs/testing": "^11.1.28",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.2"
+  }
+}

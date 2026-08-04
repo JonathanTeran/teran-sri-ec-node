@@ -1,0 +1,14 @@
+{
+  "name": "teran-sri-ec-node",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "test": "npm test --workspaces --if-present"
+  },
+  "license": "MIT",
+  "author": "Jonathan Terán"
+}
