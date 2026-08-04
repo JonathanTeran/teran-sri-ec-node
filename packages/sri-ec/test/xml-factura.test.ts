@@ -46,6 +46,23 @@ function normalizeXml(xml: string): string {
   return xml.replace(/>\s+</g, '><').trim();
 }
 
+/**
+ * `facturaFixture` sin los 2 campos que sí trae con valor (`direccionComprador`,
+ * `infoAdicional`) de los 7 campos opcionales que este serializador puede
+ * emitir cuando están presentes (ver doc de `FacturaXmlSerializer`) — el
+ * subconjunto que SÍ es representable en el value object v2 de PHP
+ * (`Documents\Factura`), o sea, exactamente lo que construye
+ * `scripts/gen-fixtures.php` para generar `test/fixtures/factura.xml`.
+ * `guiaRemision`, `TotalImpuesto.descuentoAdicional`,
+ * `InfoTributaria.contribuyenteRimpe`/`agenteRetencion` ya vienen ausentes
+ * en `facturaFixture`, así que no hace falta desactivarlos aquí.
+ */
+const facturaGolden: Factura = {
+  ...facturaFixture,
+  direccionComprador: undefined,
+  infoAdicional: undefined,
+};
+
 describe('FacturaXmlSerializer', () => {
   it('la clave de acceso calculada coincide con la usada por scripts/gen-fixtures.php', () => {
     // Ancla de regresión: si alguien cambia los parámetros de arriba sin
@@ -54,14 +71,21 @@ describe('FacturaXmlSerializer', () => {
     expect(claveAcceso).toBe('0308202601179001100100110010010000000011234567817');
   });
 
-  it('serializa facturaFixture idéntico (normalizado) al fixture dorado generado por PHP', () => {
-    const xml = new FacturaXmlSerializer().serialize(facturaFixture, claveAcceso);
+  it('serializa facturaGolden (sin los campos no representables en PHP v2) idéntico (normalizado) al fixture dorado generado por PHP', () => {
+    // Regresión pedida en la revisión: omitir los 7 campos opcionales
+    // nuevos (usando facturaGolden, que solo desactiva los 2 que
+    // facturaFixture trae con valor) debe seguir reproduciendo el XML
+    // dorado byte a byte (normalizado). facturaFixture completo (con
+    // direccionComprador/infoAdicional presentes) NO se compara aquí — ver
+    // el describe 'campos opcionales del XSD 2.1.0' más abajo, que verifica
+    // que sí se emiten cuando están presentes.
+    const xml = new FacturaXmlSerializer().serialize(facturaGolden, claveAcceso);
 
     expect(normalizeXml(xml)).toBe(normalizeXml(golden));
   });
 
   it('respeta el orden de elementos infoTributaria → infoFactura → detalles', () => {
-    const xml = new FacturaXmlSerializer().serialize(facturaFixture, claveAcceso);
+    const xml = new FacturaXmlSerializer().serialize(facturaGolden, claveAcceso);
 
     const iTributaria = xml.indexOf('<infoTributaria>');
     const iFactura = xml.indexOf('<infoFactura>');
@@ -72,14 +96,11 @@ describe('FacturaXmlSerializer', () => {
     expect(iDetalles).toBeGreaterThan(iFactura);
   });
 
-  it('no serializa infoAdicional (no representable en el value object v2 de PHP)', () => {
-    // facturaFixture SÍ trae infoAdicional (Task 4 lo modela como campo
-    // opcional para no perder cobertura de tipos), pero
-    // FacturaXmlSerializer.php no tiene ningún método que lo escriba — se
-    // mantiene la paridad ignorándolo también aquí.
-    const xml = new FacturaXmlSerializer().serialize(facturaFixture, claveAcceso);
+  it('no serializa infoAdicional/direccionComprador cuando están ausentes', () => {
+    const xml = new FacturaXmlSerializer().serialize(facturaGolden, claveAcceso);
 
     expect(xml).not.toContain('infoAdicional');
+    expect(xml).not.toContain('direccionComprador');
   });
 
   it('incluye la claveAcceso recibida como parámetro', () => {
@@ -137,6 +158,113 @@ describe('FacturaXmlSerializer', () => {
     const xml = new FacturaXmlSerializer().serialize(sinTarifa, claveAcceso);
 
     expect(xml).toContain('<tarifa>0.00</tarifa>');
+  });
+});
+
+/**
+ * Factura con los 7 campos opcionales del XSD 2.1.0 que el value object v2
+ * de PHP no modela, pero que sí son legales (`minOccurs="0"`) y que el
+ * generador 1.x (`FacturaGenerator.php`/`XmlGenerator.php`) escribe cuando
+ * están presentes. `direccionComprador` e `infoAdicional` ya vienen con
+ * valor en `facturaFixture`; los otros 5 se agregan aquí explícitamente.
+ * `moneda`/`propina` se fuerzan a valores distintos del literal por
+ * defecto (`'DOLAR'`/`'0.00'`) para verificar que el serializador los lee
+ * del documento en vez de ignorarlos.
+ */
+const facturaConOpcionales: Factura = {
+  ...facturaFixture,
+  infoTributaria: {
+    ...facturaFixture.infoTributaria,
+    agenteRetencion: '30',
+    contribuyenteRimpe: 'CONTRIBUYENTE RÉGIMEN RIMPE',
+  },
+  guiaRemision: '001-001-000000123',
+  propina: '1.50',
+  moneda: 'USD',
+  totalConImpuestos: [{ ...facturaFixture.totalConImpuestos[0]!, descuentoAdicional: '5.00' }],
+  infoAdicional: { Email: 'cliente@example.com', Telefono: '0999999999' },
+};
+
+describe('FacturaXmlSerializer — campos opcionales del XSD 2.1.0 (no modelados en PHP v2)', () => {
+  const xml = new FacturaXmlSerializer().serialize(facturaConOpcionales, claveAcceso);
+
+  it('emite infoTributaria/agenteRetencion e infoTributaria/contribuyenteRimpe con su valor', () => {
+    expect(xml).toContain('<agenteRetencion>30</agenteRetencion>');
+    expect(xml).toContain('<contribuyenteRimpe>CONTRIBUYENTE RÉGIMEN RIMPE</contribuyenteRimpe>');
+  });
+
+  it('posiciona agenteRetencion/contribuyenteRimpe después de dirMatriz, en ese orden, dentro de infoTributaria', () => {
+    const iDirMatriz = xml.indexOf('<dirMatriz>');
+    const iAgenteRetencion = xml.indexOf('<agenteRetencion>');
+    const iContribuyenteRimpe = xml.indexOf('<contribuyenteRimpe>');
+    const iCierreInfoTributaria = xml.indexOf('</infoTributaria>');
+
+    expect(iDirMatriz).toBeGreaterThan(-1);
+    expect(iAgenteRetencion).toBeGreaterThan(iDirMatriz);
+    expect(iContribuyenteRimpe).toBeGreaterThan(iAgenteRetencion);
+    expect(iCierreInfoTributaria).toBeGreaterThan(iContribuyenteRimpe);
+  });
+
+  it('emite guiaRemision entre tipoIdentificacionComprador y razonSocialComprador', () => {
+    expect(xml).toContain('<guiaRemision>001-001-000000123</guiaRemision>');
+
+    const iTipoIdent = xml.indexOf('<tipoIdentificacionComprador>');
+    const iGuiaRemision = xml.indexOf('<guiaRemision>');
+    const iRazonSocialComprador = xml.indexOf('<razonSocialComprador>');
+
+    expect(iGuiaRemision).toBeGreaterThan(iTipoIdent);
+    expect(iRazonSocialComprador).toBeGreaterThan(iGuiaRemision);
+  });
+
+  it('emite direccionComprador entre identificacionComprador y totalSinImpuestos', () => {
+    expect(xml).toContain('<direccionComprador>Calle Falsa 123, Quito</direccionComprador>');
+
+    const iIdentComprador = xml.indexOf('<identificacionComprador>');
+    const iDireccionComprador = xml.indexOf('<direccionComprador>');
+    const iTotalSinImpuestos = xml.indexOf('<totalSinImpuestos>');
+
+    expect(iDireccionComprador).toBeGreaterThan(iIdentComprador);
+    expect(iTotalSinImpuestos).toBeGreaterThan(iDireccionComprador);
+  });
+
+  it('emite descuentoAdicional dentro de totalImpuesto, entre codigoPorcentaje y baseImponible', () => {
+    expect(xml).toContain('<descuentoAdicional>5.00</descuentoAdicional>');
+
+    const iCodigoPorcentaje = xml.indexOf('<codigoPorcentaje>');
+    const iDescuentoAdicional = xml.indexOf('<descuentoAdicional>');
+    const iBaseImponible = xml.indexOf('<baseImponible>');
+
+    expect(iDescuentoAdicional).toBeGreaterThan(iCodigoPorcentaje);
+    expect(iBaseImponible).toBeGreaterThan(iDescuentoAdicional);
+  });
+
+  it('lee propina/moneda del documento en vez del literal por defecto, cuando están presentes', () => {
+    expect(xml).toContain('<propina>1.50</propina>');
+    expect(xml).toContain('<moneda>USD</moneda>');
+    expect(xml).not.toContain('<propina>0.00</propina>');
+    expect(xml).not.toContain('<moneda>DOLAR</moneda>');
+  });
+
+  it('propina/moneda usan el literal por defecto cuando están ausentes', () => {
+    const sinPropinaNiMoneda: Factura = { ...facturaFixture, propina: undefined, moneda: undefined };
+    const xmlDefault = new FacturaXmlSerializer().serialize(sinPropinaNiMoneda, claveAcceso);
+
+    expect(xmlDefault).toContain('<propina>0.00</propina>');
+    expect(xmlDefault).toContain('<moneda>DOLAR</moneda>');
+  });
+
+  it('emite infoAdicional (con sus campoAdicional[nombre]) como último hijo de <factura>, después de detalles', () => {
+    expect(xml).toContain('<campoAdicional nombre="Email">cliente@example.com</campoAdicional>');
+    expect(xml).toContain('<campoAdicional nombre="Telefono">0999999999</campoAdicional>');
+
+    // Orden de inserción del record `infoAdicional` (Email antes que Telefono).
+    expect(xml.indexOf('nombre="Email"')).toBeLessThan(xml.indexOf('nombre="Telefono"'));
+
+    const iCierreDetalles = xml.indexOf('</detalles>');
+    const iInfoAdicional = xml.indexOf('<infoAdicional>');
+
+    expect(iInfoAdicional).toBeGreaterThan(iCierreDetalles);
+    expect(xml.endsWith('</infoAdicional></factura>')).toBe(true);
   });
 });
 

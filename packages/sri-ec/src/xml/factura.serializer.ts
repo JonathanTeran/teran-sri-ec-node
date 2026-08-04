@@ -5,20 +5,38 @@ import { XmlBuilder, XmlElement, serializeXmlDocument } from './xml-builder.js';
 
 /**
  * Serializador XML de `Factura` (codDoc `01`). Port campo a campo de
- * `src/Xml/FacturaXmlSerializer.php` — misma estructura, mismo orden de
+ * `src/Xml/FacturaXmlSerializer.php` — misma estructura, mismo orden base de
  * elementos (`infoTributaria` → `infoFactura` → `detalles`), mismos valores
- * literales/hardcodeados (`propina`, `moneda`, `codDoc`, `version`).
+ * literales (`codDoc`, `version`).
  *
- * Subconjunto representable respecto al fixture TS (`documents.test.ts`,
- * `facturaFixture`): el value object v2 de PHP (`Documents\Factura`) y su
- * serializador NO modelan `direccionComprador`, `guiaRemision` ni
- * `infoAdicional` (no existen como parámetro/campo en absoluto), y escriben
- * `propina`/`moneda` como literales fijos ignorando cualquier valor que
- * traiga el documento. Este serializador replica exactamente ese
- * comportamiento — esos 5 campos opcionales del tipo TS `Factura` se leen
- * pero NUNCA se emiten (o se ignoran a favor del literal), para mantener
- * paridad byte-a-byte con el fixture dorado generado por PHP
- * (`scripts/gen-fixtures.php` → `test/fixtures/factura.xml`).
+ * `Documents\Factura` (value object v2 de PHP) y su serializador NO modelan
+ * `direccionComprador`, `guiaRemision`, `infoAdicional`,
+ * `contribuyenteRimpe`, `agenteRetencion` ni
+ * `TotalImpuesto.descuentoAdicional` — pero SÍ son campos legales del XSD
+ * oficial `factura_v2.1.0.xsd` (todos `minOccurs="0"`), y el generador 1.x
+ * (`Generators/FacturaGenerator.php` + `Generators/XmlGenerator.php`) sí los
+ * escribe cuando están presentes, en la posición exacta que exige la
+ * secuencia del XSD. Este serializador emite esos 7 campos cuando el
+ * documento TS los trae (el tipo `Factura` los modela todos como
+ * opcionales), en la posición verificada directamente contra
+ * `resources/xsd/factura_v2.1.0.xsd` (no solo contra el generador 1.x, que
+ * apunta a la versión de esquema `1.1.0` — se usó como referencia de orden,
+ * pero la fuente de verdad final es el XSD 2.1.0):
+ *
+ *   - `infoTributaria`: `dirMatriz` → `agenteRetencion`? → `contribuyenteRimpe`?
+ *   - `infoFactura`: `tipoIdentificacionComprador` → `guiaRemision`? →
+ *     `razonSocialComprador` → `identificacionComprador` →
+ *     `direccionComprador`? → `totalSinImpuestos`
+ *   - `totalImpuesto`: `codigoPorcentaje` → `descuentoAdicional`? →
+ *     `baseImponible`
+ *   - `infoAdicional` (con sus `campoAdicional[nombre]`) como último hijo de
+ *     `<factura>`, después de `<detalles>`.
+ *
+ * `propina` y `moneda` sí son obligatorios en el XSD (siempre se emiten),
+ * pero ya no se hardcodean: se lee `f.propina`/`f.moneda` si el documento
+ * los trae, y solo se usa el literal (`'0.00'`/`'DOLAR'`) cuando están
+ * ausentes — igual que `FacturaGenerator::createInfoFactura()`
+ * (`$data['propina'] ?? 0`, `$data['moneda'] ?? 'DOLAR'`).
  */
 export class FacturaXmlSerializer {
   private static readonly VERSION = '2.1.0';
@@ -35,6 +53,7 @@ export class FacturaXmlSerializer {
     this.infoTributaria(b, root, factura, claveAcceso);
     this.infoFactura(b, root, factura);
     this.detalles(b, root, factura);
+    this.infoAdicional(b, root, factura);
 
     return serializeXmlDocument(root);
   }
@@ -63,6 +82,14 @@ export class FacturaXmlSerializer {
     b.child(node, 'ptoEmi', info.ptoEmi);
     b.child(node, 'secuencial', info.secuencial);
     b.child(node, 'dirMatriz', info.dirMatriz);
+    // Orden XSD (factura_v2.1.0.xsd, complexType infoTributaria): dirMatriz
+    // → agenteRetencion? → contribuyenteRimpe?.
+    if (info.agenteRetencion !== undefined) {
+      b.child(node, 'agenteRetencion', info.agenteRetencion);
+    }
+    if (info.contribuyenteRimpe !== undefined) {
+      b.child(node, 'contribuyenteRimpe', info.contribuyenteRimpe);
+    }
   }
 
   private infoFactura(b: XmlBuilder, root: XmlElement, f: Factura): void {
@@ -72,8 +99,16 @@ export class FacturaXmlSerializer {
     // El constructor v2 de PHP defaultea obligadoContabilidad a 'NO'.
     b.child(node, 'obligadoContabilidad', f.obligadoContabilidad ?? 'NO');
     b.child(node, 'tipoIdentificacionComprador', f.tipoIdentificacionComprador);
+    // Orden XSD: tipoIdentificacionComprador → guiaRemision? → razonSocialComprador.
+    if (f.guiaRemision !== undefined) {
+      b.child(node, 'guiaRemision', f.guiaRemision);
+    }
     b.child(node, 'razonSocialComprador', f.razonSocialComprador);
     b.child(node, 'identificacionComprador', f.identificacionComprador);
+    // Orden XSD: identificacionComprador → direccionComprador? → totalSinImpuestos.
+    if (f.direccionComprador !== undefined) {
+      b.child(node, 'direccionComprador', f.direccionComprador);
+    }
     b.child(node, 'totalSinImpuestos', formatMonto(f.totalSinImpuestos, SCALE_MONEY));
     b.child(node, 'totalDescuento', formatMonto(f.totalDescuento, SCALE_MONEY));
 
@@ -82,17 +117,23 @@ export class FacturaXmlSerializer {
       const ti = b.child(tci, 'totalImpuesto');
       b.child(ti, 'codigo', imp.codigo);
       b.child(ti, 'codigoPorcentaje', imp.codigoPorcentaje);
+      // Orden XSD (complexType totalImpuesto): codigoPorcentaje →
+      // descuentoAdicional? → baseImponible.
+      if (imp.descuentoAdicional !== undefined) {
+        b.child(ti, 'descuentoAdicional', formatMonto(imp.descuentoAdicional, SCALE_MONEY));
+      }
       b.child(ti, 'baseImponible', formatMonto(imp.baseImponible, SCALE_MONEY));
       b.child(ti, 'valor', formatMonto(imp.valor, SCALE_MONEY));
     }
 
-    // `propina` y `moneda`: FacturaXmlSerializer::infoFactura() en PHP
-    // escribe SIEMPRE estos literales, sin leerlos del objeto Factura (que
-    // ni los modela) — se replica el mismo hardcodeo aquí, ignorando
-    // `f.propina`/`f.moneda` si vinieran presentes en el documento TS.
-    b.child(node, 'propina', '0.00');
+    // `propina`/`moneda` son obligatorios en el XSD (siempre se emiten),
+    // pero su valor se lee del documento si está presente — solo se usa el
+    // literal por defecto cuando el campo viene ausente, igual que
+    // `FacturaGenerator::createInfoFactura()` (`$data['propina'] ?? 0`,
+    // `$data['moneda'] ?? 'DOLAR'`).
+    b.child(node, 'propina', formatMonto(f.propina ?? '0.00', SCALE_MONEY));
     b.child(node, 'importeTotal', formatMonto(f.importeTotal, SCALE_MONEY));
-    b.child(node, 'moneda', 'DOLAR');
+    b.child(node, 'moneda', f.moneda ?? 'DOLAR');
 
     const pagos = b.child(node, 'pagos');
     for (const pago of f.pagos) {
@@ -136,6 +177,27 @@ export class FacturaXmlSerializer {
         b.child(i, 'baseImponible', formatMonto(imp.baseImponible, SCALE_MONEY));
         b.child(i, 'valor', formatMonto(imp.valor, SCALE_MONEY));
       }
+    }
+  }
+
+  /**
+   * `<infoAdicional>` — último hijo de `<factura>`, después de `<detalles>`
+   * (port de `XmlGenerator::addInfoAdicional()` / `FacturaGenerator::generate()`,
+   * paso 4). No existe en el value object v2 de PHP, pero sí en el XSD
+   * oficial y en el generador 1.x; se omite el elemento por completo si
+   * `infoAdicional` está ausente o vacío (mismo criterio que
+   * `if (empty($infoAdicional)) return;`).
+   */
+  private infoAdicional(b: XmlBuilder, root: XmlElement, f: Factura): void {
+    const entries = f.infoAdicional ? Object.entries(f.infoAdicional) : [];
+    if (entries.length === 0) {
+      return;
+    }
+
+    const node = b.child(root, 'infoAdicional');
+    for (const [nombre, valor] of entries) {
+      const campo = b.child(node, 'campoAdicional', valor);
+      campo.setAttribute('nombre', nombre);
     }
   }
 }
