@@ -182,21 +182,70 @@ if (resultado.status === 'AUTORIZADO') {
 - `messages` — `Message[]` con los mensajes crudos del SRI
 - `rejectedStage?` — `'RECEPCION'` (el comprobante nunca entró al sistema del SRI) o `'AUTORIZACION'` (entró, pero fue rechazado después), solo presente si `status === 'RECHAZADO'`
 
-Un `CommunicationError` (timeout, red caída, fallo SOAP) **no** se convierte en `EmissionResult`: se propaga como excepción, porque a diferencia de un rechazo del SRI (una respuesta válida con estado desfavorable), un fallo de comunicación no permite saber si el comprobante llegó a procesarse.
+Si se pasa `claveAcceso` explícitamente, se verifica antes de firmar: 49 dígitos, dígito verificador Módulo 11 correcto y coherencia campo a campo con el documento (fecha, `codDoc`, RUC, ambiente, serie y secuencial). Una clave arbitraria quedaría firmada dentro del XML, así que se rechaza con `ValidationError`.
 
 Otros métodos de `SriClient`:
+- `prepare(doc: Comprobante, claveAcceso?: string): { claveAcceso, signedXml }` — todo lo que hace `emit()` **antes** de tocar la red: validar, calcular la clave, serializar y firmar. Ver [Firmar sin emitir](#firmar-sin-emitir-prepare).
 - `authorize(claveAcceso: string): Promise<AuthorizationOutcome>` — re-consulta el estado de una clave ya enviada (útil para un `EN_PROCESO`).
 - `sign(xml: string): string` — solo firma un XML ya serializado, sin enviarlo.
 
-### Envío masivo (`BatchEmitter`)
+#### ⚠️ Fallos de comunicación: nunca reintente con `emit()`
+
+Un `CommunicationError` (timeout, red caída, fallo SOAP) **no** se convierte en `EmissionResult`: se propaga como excepción, porque a diferencia de un rechazo del SRI (una respuesta válida con estado desfavorable), un fallo de comunicación no permite saber si el comprobante llegó a procesarse.
+
+El error **lleva adjunto el comprobante en vuelo** (`claveAcceso` y `signedXml`) precisamente para que esa evidencia no se pierda:
 
 ```ts
-import { Ambiente, BatchEmitter } from '@amephia/sri-ec';
+import { CommunicationError } from '@amephia/sri-ec';
 
+try {
+  await sri.emit(factura);
+} catch (err) {
+  if (err instanceof CommunicationError && err.claveAcceso) {
+    // 1. PERSISTA el par antes de hacer nada más.
+    await repositorio.guardar(err.claveAcceso, err.signedXml!);
+
+    // 2. Resuelva el estado real consultando la clave, NO reemitiendo.
+    const estado = await sri.authorize(err.claveAcceso);
+    console.log(estado.estado); // AUTORIZADO / EN PROCESO / NO AUTORIZADO...
+  }
+  throw err;
+}
+```
+
+**Reintentar con un `emit()` nuevo es siempre incorrecto**: cada llamada genera un código numérico aleatorio distinto, así que produciría *otra* clave de acceso — el comprobante original (que el SRI puede haber aceptado) quedaría irresoluble y el secuencial se duplicaría.
+
+### Firmar sin emitir (`prepare`)
+
+`prepare()` devuelve el comprobante listo para despachar sin contactar al SRI. Es el puente soportado hacia `BatchEmitter`, hacia una cola de trabajos o hacia un transporte propio:
+
+```ts
+const { claveAcceso, signedXml } = sri.prepare(factura);
+
+// Persista SIEMPRE el par antes de enviarlo: una vez que el XML sale a la
+// red, la claveAcceso es el único identificador con el que se puede resolver
+// el comprobante ante el SRI.
+await repositorio.guardar(claveAcceso, signedXml);
+```
+
+Acepta el mismo `claveAcceso` opcional que `emit()` (con la misma verificación) y lanza los mismos `ValidationError`.
+
+### Envío masivo (`BatchEmitter`)
+
+`BatchEmitter` trabaja sobre pares `(claveAcceso, signedXml)` ya listos. Para obtenerlos a partir de sus documentos, use `SriClient.prepare()` — es exactamente la mitad local de `emit()`:
+
+```ts
+import { Ambiente, BatchEmitter, loadCertificate, SriClient } from '@amephia/sri-ec';
+
+const certificate = loadCertificate(readFileSync('firma.p12'), process.env['SRI_P12_PASSWORD']!);
+const sri = new SriClient({ ambiente: Ambiente.Produccion, certificate });
 const batch = new BatchEmitter({ ambiente: Ambiente.Produccion });
 
-batch.add(claveAcceso1, signedXml1); // firmado previamente con sri.sign() o XadesSigner
-batch.add(claveAcceso2, signedXml2); // idempotente por clave de acceso
+for (const doc of documentos) {
+  const { claveAcceso, signedXml } = sri.prepare(doc); // valida + clave + serializa + firma
+  await repositorio.guardar(claveAcceso, signedXml);   // persistir ANTES de enviar
+  batch.add(claveAcceso, signedXml);                   // idempotente por clave de acceso
+}
 
 await batch.run(); // procesa hasta agotar pendientes, maxPasses, o quedarse sin progreso — y RETORNA
 
@@ -250,6 +299,19 @@ await validarRucOnline('1790011001001');                 // local + verificació
 
 `validarRucLocal()` reproduce **a propósito** la validación superficial del `BusinessValidator.php` original (tercer dígito de régimen + establecimiento ≠ `"000"`, sin módulo 10/11 ni provincia) — es la validación que corre internamente `assertValid()`/`SriClient.emit()`. `{ checksum: true }` y `validarRucChecksum()` son una extensión de este port: el algoritmo real ecuatoriano, opt-in y aditivo.
 
+### Convenciones de nomenclatura (español/inglés)
+
+La API pública mezcla los dos idiomas **a propósito**, con una regla simple:
+
+| Ámbito | Idioma | Ejemplos |
+|---|---|---|
+| Conceptos del dominio SRI — todo lo que tiene un nombre oficial en la ficha técnica, el XSD o los web services | **Español**, con la grafía del SRI | `generarClaveAcceso`, `claveAcceso`, `infoTributaria`, `SriTransport.enviar`/`autorizar` (las operaciones SOAP se llaman así), `validarRucLocal`, `TipoComprobante`, `Ambiente`, `docsSustento` |
+| Infraestructura genérica — nombres que no describen nada específico del SRI | **Inglés** | `SriClient.emit`/`prepare`/`authorize`/`sign`, `loadCertificate`, `toCents`, `BatchEmitter`, `RetryPolicy`, `Clock` |
+
+El criterio es que un desarrollador con la documentación del SRI abierta pueda buscar el término oficial (`claveAcceso`, `autorizacionComprobante`) y encontrarlo literal en el código, mientras que las piezas de plomería siguen la convención habitual del ecosistema Node. Los nombres en español replican además, uno a uno, los del paquete PHP original.
+
+Todos los **campos de los documentos** (`Factura`, `Retencion`, …) están en español sin excepción: son los nombres de elemento del XSD del SRI, y cambiarlos rompería la correspondencia con el XML generado.
+
 ### Transporte
 
 `FetchSoapTransport` (por defecto, sobre `fetch` nativo) es la única implementación incluida — no hay equivalente al `SoapClientTransport` de `ext-soap` porque Node no lo necesita. `SriClient`/`BatchEmitter` aceptan cualquier objeto que implemente la interfaz `SriTransport` (`enviar`/`autorizar`), útil para inyectar un mock en tests o un transporte propio (p. ej. con retries/proxy).
@@ -291,13 +353,19 @@ export class FacturacionService {
     return this.sri.emit(factura); // delega en SriClient.emit()
   }
 
+  firmarSinEnviar(factura: Factura) {
+    return this.sri.prepare(factura); // { claveAcceso, signedXml }, sin tocar la red
+  }
+
   loteMasivo() {
     return this.sri.createBatch(); // BatchEmitter preconfigurado con el ambiente/transport del módulo
   }
 }
 ```
 
-Para configuración asíncrona (leer el certificado de un `ConfigService`, un secret manager, etc.) use `SriModule.forRootAsync({ imports, inject, useFactory })` — mismo patrón que `ConfigModule.forRootAsync`/`TypeOrmModule.forRootAsync`. `certificate` acepta un `Certificate` ya cargado (`loadCertificate()` propio) o el par crudo `{ p12, password }`, que el provider de `SRI_CLIENT` carga internamente.
+Para configuración asíncrona (leer el certificado de un `ConfigService`, un secret manager, etc.) use `SriModule.forRootAsync({ imports, inject, useFactory })` — mismo patrón que `ConfigModule.forRootAsync`/`TypeOrmModule.forRootAsync`. `certificate` acepta un `Certificate` ya cargado (`loadCertificate()` propio) o el par crudo `{ p12, password }`, que el módulo carga internamente.
+
+El certificado se resuelve **antes** de que nada entre al contenedor de DI: bajo el token `SRI_MODULE_OPTIONS` solo queda la configuración no sensible (`ambiente`, `transport`, `validate`). Ni el `.p12` ni su contraseña se registran, para que un volcado del contenedor o una traza de error de Nest no puedan exponerlos.
 
 ## 📂 Estructura del Proyecto
 
@@ -377,6 +445,7 @@ Igual que el paquete PHP (ver `XadesSigner` para el detalle byte a byte):
 ## 🧪 Ejemplos
 
 - [`examples/emitir-factura.ts`](examples/emitir-factura.ts) — carga un certificado, arma una factura mínima y la emite contra el SRI de pruebas.
+- [`examples/lote-con-prepare.ts`](examples/lote-con-prepare.ts) — envío masivo a partir de documentos: `sri.prepare(doc)` → persistir → `batch.add()` → drenar el lote con el pacing de `RetryPolicy`.
 - [`examples/smoke-pruebas-sri.ts`](examples/smoke-pruebas-sri.ts) — smoke test paso a paso (certificado → clave de acceso → firma → recepción → autorización) contra el SRI de pruebas real, leyendo `SRI_P12_PATH`/`SRI_P12_PASSWORD`/`SRI_RUC` de variables de entorno. **Contacta el servicio real del SRI — no es un mock.**
 
 Ambos se verifican con `tsc --noEmit` (`npm run typecheck:examples`), pero no se ejecutan como parte del build ni de los tests: requieren un certificado real.
@@ -421,8 +490,10 @@ Es el comportamiento esperado: `run()` avanza los comprobantes pendientes mientr
 npm install        # instala y enlaza los workspaces
 npm run build      # tsup en ambos paquetes (ESM + CJS + .d.ts)
 npm test           # vitest run en ambos paquetes
-npm run typecheck  # tsc --noEmit en ambos paquetes + examples/
+npm run typecheck  # tsc --noEmit sobre src + test de ambos paquetes, y examples/
 ```
+
+`npm run build` va antes que `typecheck`/`test`: `@amephia/nestjs-sri-ec` consume los tipos de `@amephia/sri-ec` desde su `dist/`. Es el mismo orden que ejecuta la CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml), matriz Node 20 y 22 en cada push y PR).
 
 El `workspaces` de la raíz (`package.json`) es un **array explícito y ordenado** (`["packages/sri-ec", "packages/nestjs-sri-ec"]`), no un glob — al añadir un paquete nuevo hay que agregarlo manualmente a esa lista.
 
