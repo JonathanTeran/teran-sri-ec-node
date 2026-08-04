@@ -31,14 +31,12 @@
     "build": "tsup",
     "test": "vitest run"
   },
-  "dependencies": {
-    "@amephia/sri-ec": "*"
-  },
   "peerDependencies": {
     "@amephia/sri-ec": "*",
     "@nestjs/common": "^10 || ^11"
   },
   "devDependencies": {
+    "@amephia/sri-ec": "*",
     "typescript": "^5.9.3",
     "tsup": "^8.5.1",
     "vitest": "^3.2.7",
