@@ -14,18 +14,10 @@ import {
   markSent,
   type BatchItem,
   type ComprobanteRepository,
-  type Sleep,
 } from '../src/batch/index.js';
 import { Ambiente } from '../src/catalogs/index.js';
 import { CommunicationError } from '../src/errors/index.js';
 import type { AuthorizationOutcome, ReceptionOutcome, SriTransport } from '../src/transport/index.js';
-
-/**
- * `sleep` inyectable que resuelve de inmediato — evita esperar los backoffs
- * reales de `RetryPolicy` (hasta 600s) en cualquier test que ejercite una
- * pasada sin progreso (`EN PROCESO`, fallos de comunicación transitorios).
- */
-const instantSleep: Sleep = async () => {};
 
 function mockTransport(
   overrides: { enviar?: SriTransport['enviar']; autorizar?: SriTransport['autorizar'] } = {},
@@ -152,7 +144,7 @@ describe('RetryPolicy', () => {
 
 describe('BatchProcessor', () => {
   function processor(transport: SriTransport, retryPolicy?: RetryPolicy): BatchProcessor {
-    return new BatchProcessor(transport, Ambiente.Pruebas, { retryPolicy, sleep: instantSleep });
+    return new BatchProcessor(transport, Ambiente.Pruebas, { retryPolicy });
   }
 
   it('flujo feliz: RECIBIDA + AUTORIZADO llega a AUTHORIZED con numeroAutorizacion', async () => {
@@ -196,6 +188,45 @@ describe('BatchProcessor', () => {
 
     expect(repo.get(CLAVE)?.state).toBe('IN_PROCESS');
   });
+
+  it(
+    "'EN PROCESO' estancado: process() retorna de inmediato sin esperar (sin timers), deja el " +
+      'item IN_PROCESS (nunca FAILED) e incrementa attempts una vez por pasada; una segunda ' +
+      'llamada retoma y termina cuando el SRI ya autorizó',
+    async () => {
+      const autorizar = vi.fn(async (): Promise<AuthorizationOutcome> => ({ estado: 'EN PROCESO', mensajes: [] }));
+      const enviar = vi.fn(async (): Promise<ReceptionOutcome> => ({ estado: 'RECIBIDA', mensajes: [] }));
+      const repo = new InMemoryComprobanteRepository();
+      // Arranca ya en IN_PROCESS (attempts=1): una pasada sin progreso de estado real.
+      repo.put(markInProcess(markSent(createBatchItem(CLAVE, '<xml/>')), []));
+
+      const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout');
+      const p = processor({ enviar, autorizar });
+
+      await p.process(repo);
+
+      // (c) el camino por defecto no espera: ningún timer se programa.
+      expect(setTimeoutSpy).not.toHaveBeenCalled();
+
+      // (a) el item sigue EN PROCESO en el SRI: debe quedar IN_PROCESS, jamás FAILED, tras una
+      // sola pasada sin progreso — y solo un intento más (no varios "quemados" de una).
+      let item = repo.get(CLAVE);
+      expect(item?.state).toBe('IN_PROCESS');
+      expect(item?.attempts).toBe(2);
+      expect(enviar).not.toHaveBeenCalled();
+
+      // (b) el SRI ya terminó de procesarlo: una segunda invocación (como haría un worker de
+      // cola reinvocando más tarde) retoma y llega a AUTHORIZED.
+      autorizar.mockResolvedValueOnce({ estado: 'AUTORIZADO', numeroAutorizacion: '123', mensajes: [] });
+      await p.process(repo);
+
+      item = repo.get(CLAVE);
+      expect(item?.state).toBe('AUTHORIZED');
+      expect(item?.numeroAutorizacion).toBe('123');
+
+      setTimeoutSpy.mockRestore();
+    },
+  );
 
   it('fallo de comunicación transitorio agota reintentos y termina en FAILED', async () => {
     const enviar = vi.fn(async (): Promise<ReceptionOutcome> => {
@@ -248,7 +279,7 @@ describe('BatchEmitter', () => {
     transport: SriTransport,
     overrides: { retryPolicy?: RetryPolicy; repository?: ComprobanteRepository } = {},
   ): BatchEmitter {
-    return new BatchEmitter({ ambiente: Ambiente.Pruebas, transport, sleep: instantSleep, ...overrides });
+    return new BatchEmitter({ ambiente: Ambiente.Pruebas, transport, ...overrides });
   }
 
   it('add() es idempotente por clave de acceso: no duplica ni reemplaza', async () => {
@@ -303,7 +334,7 @@ describe('BatchEmitter', () => {
     expect(autorizar).not.toHaveBeenCalled();
   });
 
-  it('FAILED tras maxAttempts en errores de red', async () => {
+  it('FAILED tras maxAttempts en errores de red (cada intento requiere una reinvocación de run(), como un worker de cola)', async () => {
     const enviar = vi.fn(async (): Promise<ReceptionOutcome> => {
       throw new CommunicationError('ECONNRESET');
     });
@@ -311,7 +342,19 @@ describe('BatchEmitter', () => {
     const e = emitter({ enviar, autorizar }, { retryPolicy: new RetryPolicy({ maxAttempts: 3 }) });
 
     e.add(CLAVE, '<xml/>');
-    await e.run();
+
+    // Un `CommunicationError` que persiste nunca cambia el estado del item (sigue PENDING), así
+    // que cada pasada de run() es "sin progreso" y retorna de inmediato — el caller (aquí, el
+    // test haciendo de worker de cola) debe reinvocar run() una vez por intento.
+    await e.run(); // attempts 0 -> 1, sigue PENDING
+    expect(e.result(CLAVE)?.state).toBe('PENDING');
+    expect(e.result(CLAVE)?.attempts).toBe(1);
+
+    await e.run(); // attempts 1 -> 2, sigue PENDING
+    expect(e.result(CLAVE)?.state).toBe('PENDING');
+    expect(e.result(CLAVE)?.attempts).toBe(2);
+
+    await e.run(); // attempts 2 -> 3: maxAttempts alcanzado -> FAILED
 
     const item = e.result(CLAVE);
     expect(item?.state).toBe('FAILED');

@@ -1,7 +1,7 @@
 import type { Ambiente } from '../catalogs/index.js';
 import { FetchSoapTransport, type SriTransport } from '../transport/index.js';
 import { createBatchItem, type BatchItem, type ComprobanteState } from './batch-item.js';
-import { BatchProcessor, type RateLimiter, type Sleep } from './batch-processor.js';
+import { BatchProcessor, type RateLimiter } from './batch-processor.js';
 import { InMemoryComprobanteRepository, type ComprobanteRepository } from './comprobante-repository.js';
 import { RetryPolicy } from './retry-policy.js';
 
@@ -14,8 +14,6 @@ export interface BatchEmitterOptions {
   /** Por defecto `new InMemoryComprobanteRepository()` — inyectable para persistir el lote en otro backend (DB, cola). */
   repository?: ComprobanteRepository;
   rateLimiter?: RateLimiter;
-  /** Inyectable para tests — evita esperar los backoffs reales de `RetryPolicy`. Por defecto `setTimeout` real. */
-  sleep?: Sleep;
 }
 
 /**
@@ -28,6 +26,13 @@ export interface BatchEmitterOptions {
  * ya construidos), este constructor arma ambos internamente a partir de
  * `ambiente`/`transport`/`retryPolicy` — mismo patrón que `SriClient`, donde
  * el caller solo provee lo que quiere personalizar.
+ *
+ * `run()` delega en `BatchProcessor.process()`, que nunca espera
+ * internamente: pacing y reinvocación (cuándo volver a llamar `run()` para
+ * que un item que sigue `EN PROCESO` o con fallos transitorios avance) son
+ * responsabilidad del caller — un worker de cola o un cron — igual que en el
+ * PHP. Usa `RetryPolicy.delaySeconds()` para calcular cuánto esperar antes de
+ * la próxima invocación.
  */
 export class BatchEmitter {
   private readonly repository: ComprobanteRepository;
@@ -38,7 +43,6 @@ export class BatchEmitter {
     this.processor = new BatchProcessor(opts.transport ?? new FetchSoapTransport(), opts.ambiente, {
       retryPolicy: opts.retryPolicy,
       rateLimiter: opts.rateLimiter,
-      sleep: opts.sleep,
     });
   }
 
@@ -50,7 +54,9 @@ export class BatchEmitter {
   }
 
   /**
-   * Procesa todos los pendientes. Re-llamable: reanuda donde quedó (items ya
+   * Procesa los pendientes hasta que no queden, se agote `maxPasses`, o una
+   * pasada no logre progreso de estado (retorna de inmediato en ese caso, sin
+   * esperar — ver nota de clase). Re-llamable: reanuda donde quedó (items ya
    * terminales no se reprocesan; los que siguen `PENDING`/`SENT`/`IN_PROCESS`
    * continúan su máquina de estados).
    */

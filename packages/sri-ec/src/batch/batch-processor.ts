@@ -31,39 +31,37 @@ export class NullRateLimiter implements RateLimiter {
   }
 }
 
-/**
- * Función de espera inyectable — por defecto un `setTimeout` real envuelto en
- * `Promise`. Los tests inyectan una versión que resuelve de inmediato para no
- * esperar los backoffs reales de {@link RetryPolicy} (hasta 600s).
- */
-export type Sleep = (ms: number) => Promise<void>;
-
-const realSleep: Sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
 export interface BatchProcessorOptions {
   retryPolicy?: RetryPolicy;
   rateLimiter?: RateLimiter;
-  sleep?: Sleep;
 }
 
 /**
  * Conduce la máquina de estados del envío masivo de forma idempotente: enviar
  * → autorizar, con reintentos ({@link RetryPolicy}) y rate-limit. Port de
  * `Teran\Sri\Batch\BatchProcessor`.
+ *
+ * Pacing y reinvocación son responsabilidad del caller, igual que en el PHP:
+ * `process()` (y `BatchEmitter.run()`, que delega en él) nunca espera
+ * internamente. Cuando una pasada no logra progreso de estado (p. ej. todos
+ * los items pendientes quedan `EN PROCESO`, o un fallo de comunicación solo
+ * incrementó `attempts`), retorna de inmediato en vez de reintentar dentro de
+ * la misma llamada. Un worker de cola (o cron) debe reinvocar `process()`/
+ * `run()` más tarde — {@link RetryPolicy.delaySeconds} está expuesto
+ * justamente para que ese caller calcule cuánto esperar antes de la próxima
+ * invocación.
  */
 export class BatchProcessor {
   private readonly transport: SriTransport;
   private readonly ambiente: Ambiente;
   private readonly retryPolicy: RetryPolicy;
   private readonly rateLimiter: RateLimiter;
-  private readonly sleep: Sleep;
 
   constructor(transport: SriTransport, ambiente: Ambiente, options: BatchProcessorOptions = {}) {
     this.transport = transport;
     this.ambiente = ambiente;
     this.retryPolicy = options.retryPolicy ?? new RetryPolicy();
     this.rateLimiter = options.rateLimiter ?? new NullRateLimiter();
-    this.sleep = options.sleep ?? realSleep;
   }
 
   /** El RUC ocupa 13 dígitos a partir de la posición 10 en la clave de acceso (49 díg.). Port de `BatchProcessor::throttleKey()`. */
@@ -118,23 +116,19 @@ export class BatchProcessor {
   }
 
   /**
-   * Recorre los pendientes del repositorio avanzándolos paso a paso hasta que
-   * no queden pendientes o se agote `maxPasses`. Port de
-   * `BatchProcessor::process()`, con una diferencia deliberada: cuando una
-   * pasada completa no logra progreso de estado (p. ej. todos los items
-   * quedan `IN_PROCESS`, o un fallo de comunicación solo incrementó
-   * `attempts`), el PHP simplemente retorna (delega el reintento a un caller
-   * externo que lo re-invoque más tarde); aquí se espera el backoff de
-   * {@link RetryPolicy} (`sleep`, real por defecto, inyectable en tests) y se
-   * continúa dentro de la misma llamada — así `run()` puede resolver un lote
-   * completo (incluyendo varias vueltas de `EN PROCESO`) sin que el caller
-   * tenga que reinvocarlo en un bucle. Sigue siendo reanudable: si
-   * `maxPasses` se agota antes de llegar a un estado terminal, una llamada
-   * posterior a `process()`/`run()` retoma exactamente donde quedó.
+   * Recorre los pendientes del repositorio avanzándolos paso a paso mientras
+   * cada pasada logre progreso de estado, hasta que no queden pendientes, se
+   * agote `maxPasses`, o una pasada completa no cambie el estado de ningún
+   * item. Port exacto de `BatchProcessor::process()`: cuando no hay progreso
+   * (p. ej. todos los pendientes quedan `EN PROCESO`, o un fallo de
+   * comunicación transitorio solo incrementó `attempts` sin cambiar de
+   * estado), retorna de inmediato — nunca espera ni reintenta dentro de la
+   * misma llamada — dejando la re-invocación a un caller externo (worker de
+   * cola, cron). Sigue siendo reanudable: una llamada posterior a
+   * `process()`/`run()` retoma exactamente donde quedó, sea porque no hubo
+   * progreso o porque se agotó `maxPasses`.
    */
   async process(repository: ComprobanteRepository, maxPasses = 20): Promise<void> {
-    let noProgressStreak = 0;
-
     for (let pass = 0; pass < maxPasses; pass++) {
       const pending = repository.pending();
       if (pending.length === 0) {
@@ -152,16 +146,9 @@ export class BatchProcessor {
         }
       }
 
-      if (stateChanged) {
-        noProgressStreak = 0;
-        continue;
+      if (!stateChanged) {
+        return; // sin progreso (p. ej. todo EN PROCESO) — reintentar más tarde
       }
-
-      noProgressStreak += 1;
-      if (pass === maxPasses - 1) {
-        return; // presupuesto de pasadas agotado; una corrida posterior reanuda.
-      }
-      await this.sleep(this.retryPolicy.delaySeconds(noProgressStreak) * 1000);
     }
   }
 }

@@ -10,13 +10,11 @@ export interface RetryPolicyOptions {
  * exacto de `Teran\Sri\Batch\RetryPolicy`: backoff exponencial
  * `delay = baseDelaySeconds * 2^(attempt-1)`, acotado por `maxDelaySeconds`.
  *
- * `BatchProcessor` usa `delaySeconds()` para pausar (vía `sleep` inyectable)
- * entre pasadas sin progreso — a diferencia del PHP, donde `process()` es
- * puramente síncrono y devuelve el control de inmediato a un caller externo
- * (worker de cola) que decide cuándo reintentar, aquí `BatchProcessor.process`
- * puede esperar internamente (con `setTimeout` real por defecto) para que una
- * sola llamada a `run()` pueda resolver un lote completo sin que el caller
- * tenga que reinvocarlo en un bucle.
+ * `BatchProcessor.process()` nunca espera internamente (igual que el PHP):
+ * cuando una pasada no logra progreso de estado, retorna de inmediato y deja
+ * la reinvocación a un caller externo (worker de cola, cron). `delaySeconds()`
+ * está expuesto justamente para que ese caller calcule cuánto esperar antes
+ * de volver a invocar `process()`/`BatchEmitter.run()`.
  */
 export class RetryPolicy {
   readonly maxAttempts: number;
