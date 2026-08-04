@@ -369,14 +369,18 @@ describe('XadesSigner — paridad con el firmador PHP', () => {
       .textContent!;
   }
 
-  // `c14n-edge-cases.xml` ejercita justo lo que puede desviarse entre libxml y
-  // una implementación propia: entidades, comillas y `>` en atributos,
-  // normalización de tabuladores en valores de atributo, CDATA, comentarios,
-  // elementos vacíos/autocerrados, contenido mixto, `xml:space="preserve"` y
-  // texto solo-espacios.
+  // - `c14n-edge-cases.xml` ejercita lo que puede desviarse entre libxml y una
+  //   implementación propia: entidades, comillas y `>` en atributos,
+  //   normalización de tabuladores en valores de atributo, CDATA, comentarios,
+  //   elementos vacíos/autocerrados, contenido mixto, `xml:space="preserve"` y
+  //   texto solo-espacios.
+  // - `factura-xml-lang.xml` lleva `xml:lang`/`xml:base` en la raíz: obliga a
+  //   que la C14N de un SUBÁRBOL herede los atributos `xml:*` de los ancestros
+  //   que quedan fuera del node-set (C14N 1.0 §2.2).
   for (const [unsigned, phpFixture] of [
     ['factura.xml', 'factura-signed-php.xml'],
     ['c14n-edge-cases.xml', 'c14n-edge-cases-signed-php.xml'],
+    ['factura-xml-lang.xml', 'factura-xml-lang-signed-php.xml'],
   ] as const) {
     it(`el digest del comprobante de ${unsigned} coincide con el de PHP (C14N idéntica a libxml)`, () => {
       const signed = fixedSigner().sign(fixtureText(unsigned), testCertificate());
@@ -389,7 +393,68 @@ describe('XadesSigner — paridad con el firmador PHP', () => {
 
       expect(normalize(signed)).toBe(normalize(fixtureText(phpFixture)));
     });
+
+    // ORÁCULO EXTERNO. Los dos tests anteriores comparan la C14N del DOCUMENTO
+    // completo; estos dos fijan la C14N de SUBÁRBOL contra libxml+OpenSSL: si
+    // `canonicalize()` produjera un solo byte distinto del que canonicalizó
+    // libxml, ni la firma de PHP verificaría ni el digest coincidiría. Es la
+    // única forma de detectar un fallo de canonicalización que sea
+    // "consistente consigo mismo" (firmar y verificar con la misma función
+    // errónea siempre cuadra).
+    it(`la C14N de TS reproduce el ds:SignedInfo que firmó PHP en ${phpFixture}`, () => {
+      const php = fixtureText(phpFixture);
+      const doc = parseXml(php);
+      const canonical = canonicalize(doc.getElementsByTagNameNS(NS_DS, 'SignedInfo')[0]!);
+
+      const verifier = createVerify('sha1');
+      verifier.update(Buffer.from(canonical, 'utf8'));
+
+      expect(
+        verifier.verify(
+          testCertificate().certPem,
+          Buffer.from(textOf(php, NS_DS, 'SignatureValue').replace(/\s+/g, ''), 'base64'),
+        ),
+      ).toBe(true);
+    });
+
+    it(`la C14N de TS recomputa el digest de etsi:SignedProperties de ${phpFixture}`, () => {
+      const php = fixtureText(phpFixture);
+      const doc = parseXml(php);
+      const signedProps = doc.getElementsByTagNameNS(NS_XADES, 'SignedProperties')[0]!;
+
+      const recomputed = createHash('sha1')
+        .update(canonicalize(signedProps), 'utf8')
+        .digest('base64');
+
+      expect(recomputed).toBe(
+        elements(php, NS_DS, 'Reference')[0]!.getElementsByTagNameNS(NS_DS, 'DigestValue')[0]!
+          .textContent,
+      );
+    });
   }
+
+  it('con xml:lang/xml:base en la raíz, la firma de TS sigue cerrando (round-trip)', () => {
+    const cert = testCertificate();
+    const signed = fixedSigner().sign(fixtureText('factura-xml-lang.xml'), cert);
+    const doc = parseXml(signed);
+
+    const verifier = createVerify('sha1');
+    verifier.update(
+      Buffer.from(canonicalize(doc.getElementsByTagNameNS(NS_DS, 'SignedInfo')[0]!), 'utf8'),
+    );
+    expect(
+      verifier.verify(
+        cert.certPem,
+        Buffer.from(textOf(signed, NS_DS, 'SignatureValue').replace(/\s+/g, ''), 'base64'),
+      ),
+    ).toBe(true);
+
+    const signedProps = doc.getElementsByTagNameNS(NS_XADES, 'SignedProperties')[0]!;
+    expect(createHash('sha1').update(canonicalize(signedProps), 'utf8').digest('base64')).toBe(
+      elements(signed, NS_DS, 'Reference')[0]!.getElementsByTagNameNS(NS_DS, 'DigestValue')[0]!
+        .textContent,
+    );
+  });
 
   it('una misma instancia de XadesSigner puede firmar varios documentos (cachés de cert/clave)', () => {
     const signer = fixedSigner();

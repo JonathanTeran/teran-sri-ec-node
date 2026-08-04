@@ -67,6 +67,10 @@ $signer = new XadesSigner(
 $documents = [
     'factura.xml' => 'factura-signed-php.xml',
     'c14n-edge-cases.xml' => 'c14n-edge-cases-signed-php.xml',
+    // Raíz con atributos `xml:*`: la C14N de un SUBÁRBOL (SignedInfo,
+    // SignedProperties) debe heredarlos al nodo ápice (C14N 1.0 §2.2), o la
+    // firma no valida contra libxml/OpenSSL.
+    'factura-xml-lang.xml' => 'factura-xml-lang-signed-php.xml',
 ];
 
 foreach ($documents as $input => $output) {

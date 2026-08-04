@@ -14,7 +14,8 @@ import { SignatureError } from '../errors/index.js';
  *    canonicalizar un SUBÁRBOL (p. ej. `ds:SignedInfo`) se arrastran TODAS las
  *    declaraciones de espacio de nombres en ámbito heredadas de los ancestros
  *    — por eso el SignedInfo firmado incluye `xmlns:ds` y `xmlns:etsi` aunque
- *    ninguno de los dos esté declarado en él.
+ *    ninguno de los dos esté declarado en él. Por la misma razón, el nodo ápice
+ *    del subárbol hereda los atributos `xml:*` de sus ancestros (C14N 1.0 §2.2).
  *  - `DOMDocument::$preserveWhiteSpace = false` (libxml `xmlKeepBlanks(0)`)
  *    descarta los nodos de texto en blanco "ignorables" ANTES de calcular el
  *    digest del comprobante: sin esta poda el digest no coincide con el de PHP
@@ -141,11 +142,54 @@ export function canonicalize(node: Document | Element): string {
 
   if (node.nodeType === ELEMENT_NODE) {
     const element = node as Element;
-    renderElement(element, inScopeNamespacesOf(element), new Map(), parts);
+    // Subárbol: el ápice HEREDA los atributos `xml:*` de los ancestros que
+    // quedan fuera del node-set (C14N 1.0 §2.2, "simple inheritable attributes").
+    renderElement(
+      element,
+      inScopeNamespacesOf(element),
+      new Map(),
+      parts,
+      inheritedXmlAttributes(element),
+    );
     return parts.join('');
   }
 
   throw new SignatureError('Solo se puede canonicalizar un documento o un elemento.');
+}
+
+/**
+ * Atributos `xml:*` (`xml:lang`, `xml:base`, `xml:space`, …) que un ápice de
+ * subárbol hereda de sus ancestros al canonicalizar, porque esos ancestros no
+ * forman parte del node-set. Sin esto, la firma no valida contra libxml/OpenSSL
+ * cuando el comprobante lleva `xml:lang` (u otro `xml:*`) en la raíz.
+ *
+ * Reglas (las mismas de libxml `xmlC14NProcessAttrsAxis`): gana el ancestro más
+ * cercano y, por encima de todos, el propio ápice si ya declara el atributo.
+ */
+function inheritedXmlAttributes(element: Element): Attr[] {
+  const inherited = new Map<string, Attr>();
+
+  let current: Node | null = element.parentNode;
+  while (current && current.nodeType === ELEMENT_NODE) {
+    for (const attr of attrNodes(current as Element)) {
+      // Del ancestro más cercano al más lejano: el primero que aparece gana.
+      if (isXmlAttribute(attr) && !inherited.has(attr.nodeName)) {
+        inherited.set(attr.nodeName, attr);
+      }
+    }
+    current = current.parentNode;
+  }
+
+  // Lo que el ápice ya declara no se hereda.
+  for (const attr of attrNodes(element)) {
+    inherited.delete(attr.nodeName);
+  }
+
+  return [...inherited.values()];
+}
+
+function isXmlAttribute(attr: Attr): boolean {
+  return attr.nodeName.startsWith('xml:');
 }
 
 /**
@@ -182,6 +226,8 @@ function renderElement(
   inScope: Map<string, string>,
   rendered: Map<string, string>,
   parts: string[],
+  /** Solo en el ápice de un subárbol: atributos `xml:*` heredados (C14N 1.0 §2.2). */
+  inheritedXmlAttrs: Attr[] = [],
 ): void {
   const declarations: Array<[prefix: string, uri: string]> = [];
   for (const [prefix, uri] of inScope) {
@@ -197,7 +243,10 @@ function renderElement(
   }
   declarations.sort(([a], [b]) => (a === '' ? -1 : b === '' ? 1 : compareStrings(a, b)));
 
-  const attributes = attrNodes(element)
+  // Los `xml:*` heredados se ordenan junto con los propios: van después de los
+  // atributos sin espacio de nombres, porque su URI ('http://www.w3.org/XML/…')
+  // ordena detrás de la cadena vacía.
+  const attributes = [...attrNodes(element), ...inheritedXmlAttrs]
     .filter((attr) => !isNamespaceDeclaration(attr))
     .map((attr) => ({ attr, uri: attributeNamespace(attr, inScope) }))
     .sort(
