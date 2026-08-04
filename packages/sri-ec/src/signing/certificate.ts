@@ -141,8 +141,8 @@ function hasFriendlyName(bag: Pkcs12Bag): boolean {
 }
 
 /** true si el certBag tiene keyUsage de firma (digitalSignature o nonRepudiation). */
-function hasSigningKeyUsage(certBag: Pkcs12Bag): boolean {
-  const cert = certBag.cert;
+function hasSigningKeyUsage(certBag: Pkcs12Bag | undefined): boolean {
+  const cert = certBag?.cert;
   if (!cert) {
     return false;
   }
@@ -168,10 +168,40 @@ function sameRsaModulus(certBag: Pkcs12Bag, keyBag: Pkcs12Bag): boolean {
 /**
  * Encuentra el certificado que corresponde a una clave privada dada:
  * primero por `localKeyId` (el mecanismo estándar de PKCS#12 para vincular
- * bags), luego por coincidencia del módulo RSA, y como último recurso el
- * primer certificado disponible.
+ * bags) y luego por coincidencia del módulo RSA.
+ *
+ * Si ninguno de los dos vínculos resuelve y el `.p12` trae MÁS de un
+ * certificado (típicamente hoja + CA intermedia), se falla en vez de tomar
+ * `certBags[0]` a ciegas: elegir mal significa emitir un XML cuyo
+ * `X509Certificate`/`IssuerSerial` describen la CA mientras la firma se
+ * calculó con la clave de la hoja — el SRI lo rechaza sin explicar por qué,
+ * y no queda ninguna traza local del problema.
+ *
+ * Con un único certificado no hay ambigüedad posible: se devuelve tal cual
+ * (es también el caso de los `.p12` con clave EC, donde el cotejo por módulo
+ * RSA nunca aplica).
  */
 function matchCertBagForKey(keyBag: Pkcs12Bag, certBags: Pkcs12Bag[]): Pkcs12Bag {
+  const found = findCertBagForKey(keyBag, certBags);
+  if (found) {
+    return found;
+  }
+
+  throw new CertificateError(
+    `El archivo .p12 contiene ${certBags.length} certificados y ninguno se puede vincular a la clave privada ` +
+      '(sin atributo localKeyId coincidente ni módulo RSA igual). Elegir uno al azar produciría una firma ' +
+      'con el certificado equivocado, que el SRI rechazaría. Reexporte el .p12 incluyendo el atributo ' +
+      'localKeyId (p. ej. con `openssl pkcs12 -export`) o con un único par certificado/clave.',
+  );
+}
+
+/**
+ * Vínculo certificado↔clave, o `undefined` si no se puede establecer con
+ * certeza. Separado de {@link matchCertBagForKey} porque
+ * {@link pickBestKeyBag} necesita puntuar claves candidatas sin que una sola
+ * clave huérfana aborte la carga del `.p12` entero.
+ */
+function findCertBagForKey(keyBag: Pkcs12Bag, certBags: Pkcs12Bag[]): Pkcs12Bag | undefined {
   const keyId = localKeyIdHex(keyBag);
   if (keyId !== undefined) {
     const byId = certBags.find((certBag) => localKeyIdHex(certBag) === keyId);
@@ -185,7 +215,7 @@ function matchCertBagForKey(keyBag: Pkcs12Bag, certBags: Pkcs12Bag[]): Pkcs12Bag
     return byModulus;
   }
 
-  return certBags[0]!;
+  return certBags.length === 1 ? certBags[0] : undefined;
 }
 
 /**
@@ -202,12 +232,15 @@ function pickBestKeyBag(keyBags: Pkcs12Bag[], certBags: Pkcs12Bag[]): Pkcs12Bag 
   let bestScore = -1;
 
   for (const keyBag of keyBags) {
-    const matchedCert = matchCertBagForKey(keyBag, certBags);
+    // Una clave sin certificado vinculable no descalifica al resto: se
+    // puntúa con lo que se sepa de ella y, si aun así resulta la elegida,
+    // `matchCertBagForKey()` fallará después con el diagnóstico concreto.
+    const matchedCert = findCertBagForKey(keyBag, certBags);
     let score = 0;
     if (hasSigningKeyUsage(matchedCert)) {
       score += 2;
     }
-    if (hasFriendlyName(keyBag) || hasFriendlyName(matchedCert)) {
+    if (hasFriendlyName(keyBag) || (matchedCert !== undefined && hasFriendlyName(matchedCert))) {
       score += 1;
     }
     if (score > bestScore) {

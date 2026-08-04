@@ -48,6 +48,64 @@ const TYPE_SIGNED_PROPS = 'http://uri.etsi.org/01903#SignedProperties';
 
 const DEFAULT_DESCRIPTION = 'Comprobante electrónico SRI Ecuador';
 
+/**
+ * Techo de entradas de los cachés internos del firmador. Un proceso normal
+ * firma con uno o dos certificados; el límite solo importa en un servicio
+ * multi-emisor, donde evita que el caché crezca sin fin.
+ */
+const CACHE_MAX_ENTRIES = 32;
+
+/**
+ * Caché LRU mínima con capacidad fija. `Map` preserva orden de inserción, así
+ * que reinsertar en cada acceso deja la entrada menos usada siempre al frente.
+ */
+class LruCache<V> {
+  private readonly entries = new Map<string, V>();
+
+  constructor(private readonly maxEntries: number) {}
+
+  get size(): number {
+    return this.entries.size;
+  }
+
+  /** Solo para tests/diagnóstico: las claves son digests, nunca material sensible. */
+  keys(): string[] {
+    return [...this.entries.keys()];
+  }
+
+  get(key: string): V | undefined {
+    const value = this.entries.get(key);
+    if (value === undefined) {
+      return undefined;
+    }
+    // Refrescar la posición: pasa a ser la entrada más recientemente usada.
+    this.entries.delete(key);
+    this.entries.set(key, value);
+    return value;
+  }
+
+  set(key: string, value: V): void {
+    this.entries.delete(key);
+    this.entries.set(key, value);
+    while (this.entries.size > this.maxEntries) {
+      const oldest = this.entries.keys().next();
+      if (oldest.done === true) {
+        break;
+      }
+      this.entries.delete(oldest.value);
+    }
+  }
+}
+
+/**
+ * Clave de caché de un PEM: su SHA-256 en hex. Indexar por el PEM en crudo
+ * mantendría cada clave privada del proceso viva y legible en el heap; el
+ * digest identifica igual de bien sin retener el secreto.
+ */
+function cacheKeyFor(pem: string): string {
+  return createHash('sha256').update(pem, 'utf8').digest('hex');
+}
+
 export type DigestAlgorithm = 'sha1' | 'sha256';
 
 /** Port de `Teran\Sri\Signing\SignatureOptions`. */
@@ -89,10 +147,20 @@ export class XadesSigner {
   private readonly description: string;
   private readonly clock: Clock;
 
-  /** El parseo del certificado no cambia entre documentos: se memoiza. */
-  private readonly certificateCache = new Map<string, CertificateData>();
-  /** Igual con la clave privada ya parseada (evita re-parsear el PEM por firma). */
-  private readonly privateKeyCache = new Map<string, KeyObject>();
+  /**
+   * El parseo del certificado no cambia entre documentos: se memoiza.
+   * Clave del caché = SHA-256 del PEM, nunca el PEM (ver
+   * {@link LruCache} y `privateKeyCache`).
+   */
+  private readonly certificateCache = new LruCache<CertificateData>(CACHE_MAX_ENTRIES);
+  /**
+   * Igual con la clave privada ya parseada (evita re-parsear el PEM por
+   * firma). Indexado por SHA-256 del PEM y acotado por LRU: un `Map` sin
+   * límite indexado por el PEM dejaba TODAS las claves privadas de todos los
+   * tenants firmados vivas en el heap (recuperables en texto plano de un
+   * volcado de memoria) y crecía sin techo en un proceso multi-emisor.
+   */
+  private readonly privateKeyCache = new LruCache<KeyObject>(CACHE_MAX_ENTRIES);
 
   constructor(options: SignatureOptions = {}, clock: Clock = new SystemClock()) {
     const digestAlgorithm = (options.digestAlgorithm ?? 'sha1').toLowerCase();
@@ -222,6 +290,15 @@ export class XadesSigner {
     );
 
     // C. SignatureValue sobre el SignedInfo canonicalizado.
+    //
+    // NOTA (claves EC): `crypto.sign()` emite la firma ECDSA en DER
+    // (SEQUENCE{r,s}), mientras que XMLDSig (RFC 4051 §2.3.6) exige el par
+    // crudo r||s de longitud fija. Se deja tal cual a propósito: es
+    // exactamente lo que produce `openssl_sign()` en el XadesSigner.php de
+    // referencia, así que la paridad byte a byte se mantiene. No es un
+    // defecto activo — los certificados de firma del SRI son RSA, donde
+    // ambos formatos coinciden. Si alguna vez se admitieran comprobantes
+    // firmados con EC, aquí habría que convertir DER → r||s.
     const signedInfoCanonical = Buffer.from(canonicalize(signedInfo), 'utf8');
     let rawSignature: Buffer;
     try {
@@ -368,14 +445,15 @@ export class XadesSigner {
     return signedProps;
   }
 
-  /** Port de `XadesSigner::extractCertificateInfo()` (memoizado por PEM). */
+  /** Port de `XadesSigner::extractCertificateInfo()` (memoizado por digest del PEM). */
   private certificateData(cert: Certificate): CertificateData {
-    const cached = this.certificateCache.get(cert.certPem);
+    const key = cacheKeyFor(cert.certPem);
+    const cached = this.certificateCache.get(key);
     if (cached) {
       return cached;
     }
     const computed = this.computeCertificateData(cert);
-    this.certificateCache.set(cert.certPem, computed);
+    this.certificateCache.set(key, computed);
     return computed;
   }
 
@@ -426,7 +504,8 @@ export class XadesSigner {
   }
 
   private privateKey(cert: Certificate): KeyObject {
-    const cached = this.privateKeyCache.get(cert.privateKeyPem);
+    const cacheKey = cacheKeyFor(cert.privateKeyPem);
+    const cached = this.privateKeyCache.get(cacheKey);
     if (cached) {
       return cached;
     }
@@ -439,7 +518,7 @@ export class XadesSigner {
       const detail = err instanceof Error ? err.message : String(err);
       throw new SignatureError(`No se pudo cargar la clave privada para firmar. (${detail})`);
     }
-    this.privateKeyCache.set(cert.privateKeyPem, key);
+    this.privateKeyCache.set(cacheKey, key);
     return key;
   }
 

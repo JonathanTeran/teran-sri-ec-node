@@ -4,7 +4,7 @@
 // generado por PHP y la salida de TS sean comparables byte a byte.
 process.env['TZ'] = 'America/Guayaquil';
 
-import { createHash, createVerify } from 'node:crypto';
+import { createHash, createVerify, generateKeyPairSync } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -466,5 +466,86 @@ describe('XadesSigner — paridad con el firmador PHP', () => {
 
     expect(second).toBe(first);
     expect(other.endsWith('</ds:Signature></notaCredito>\n')).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Cachés internos: acotados y sin material sensible como clave
+// ---------------------------------------------------------------------------
+
+/** Vista de solo lectura de un caché interno del firmador, para inspeccionarlo desde el test. */
+interface CacheProbe {
+  size: number;
+  keys(): string[];
+}
+
+function cachesOf(signer: XadesSigner): { privateKeyCache: CacheProbe; certificateCache: CacheProbe } {
+  return signer as unknown as { privateKeyCache: CacheProbe; certificateCache: CacheProbe };
+}
+
+/**
+ * Claves privadas EC distintas (rápidas de generar, a diferencia de RSA):
+ * el certificado que las acompaña es el real del fixture, porque al firmador
+ * solo le interesa que `certPem` sea parseable — lo que se está ejercitando
+ * aquí es el caché de claves privadas, no la coherencia cert↔clave.
+ */
+function certificadosConClavesDistintas(n: number): Certificate[] {
+  const { certPem } = testCertificate();
+  return Array.from({ length: n }, () => ({
+    certPem,
+    privateKeyPem: generateKeyPairSync('ec', {
+      namedCurve: 'prime256v1',
+      privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
+      publicKeyEncoding: { type: 'spki', format: 'pem' },
+    }).privateKey,
+    extraCerts: [],
+  }));
+}
+
+describe('XadesSigner — cachés internos', () => {
+  it('firmar con más certificados que la capacidad deja el caché acotado (LRU)', () => {
+    const signer = fixedSigner();
+    const xml = fixtureText('factura.xml');
+    const certificados = certificadosConClavesDistintas(40);
+
+    for (const cert of certificados) {
+      signer.sign(xml, cert);
+    }
+
+    const { privateKeyCache } = cachesOf(signer);
+    expect(privateKeyCache.size).toBe(32);
+    expect(privateKeyCache.size).toBeLessThan(certificados.length);
+  });
+
+  it('ninguna clave del caché contiene material del PEM (son digests SHA-256)', () => {
+    const signer = fixedSigner();
+    const xml = fixtureText('factura.xml');
+
+    for (const cert of certificadosConClavesDistintas(5)) {
+      signer.sign(xml, cert);
+    }
+
+    const { privateKeyCache, certificateCache } = cachesOf(signer);
+    const todas = [...privateKeyCache.keys(), ...certificateCache.keys()];
+
+    expect(todas.length).toBeGreaterThan(0);
+    for (const key of todas) {
+      expect(key).not.toContain('PRIVATE KEY');
+      expect(key).not.toContain('BEGIN');
+      expect(key).toMatch(/^[0-9a-f]{64}$/);
+    }
+  });
+
+  it('el mismo certificado no ocupa entradas nuevas por firma (memoización efectiva)', () => {
+    const signer = fixedSigner();
+    const cert = testCertificate();
+
+    for (let i = 0; i < 10; i++) {
+      signer.sign(fixtureText('factura.xml'), cert);
+    }
+
+    const { privateKeyCache, certificateCache } = cachesOf(signer);
+    expect(privateKeyCache.size).toBe(1);
+    expect(certificateCache.size).toBe(1);
   });
 });

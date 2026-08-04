@@ -241,6 +241,25 @@ describe('selectCredential (heurística de selección, portada de CertificateLoa
     expect(result.keyBag).toBe(keyB);
   });
 
+  it('lanza CertificateError cuando hay varios certificados y ninguno se vincula a la clave', () => {
+    // Caso real: .p12 con hoja + CA intermedia sin atributo localKeyId. Antes
+    // se devolvía certBags[0] en silencio, pudiendo firmar con la clave de la
+    // hoja mientras el XML declaraba el certificado de la CA.
+    const keyBag = makeKeyBag({ key: { n: { toString: () => 'deadbeef' } } });
+    const leaf = makeCertBag({ publicKeyN: 'otromodulo' });
+    const ca = makeCertBag({ publicKeyN: 'tercermodulo' });
+
+    expect(() => selectCredential([keyBag], [leaf, ca])).toThrow(CertificateError);
+    expect(() => selectCredential([keyBag], [leaf, ca])).toThrow(/2 certificados/);
+  });
+
+  it('con un único certificado no vinculable no falla: no hay ambigüedad posible', () => {
+    const keyBag = makeKeyBag({ key: { n: { toString: () => 'deadbeef' } } });
+    const solo = makeCertBag({ publicKeyN: 'otromodulo' });
+
+    expect(selectCredential([keyBag], [solo]).certBag).toBe(solo);
+  });
+
   it('lanza CertificateError si no hay ninguna clave privada', () => {
     expect(() => selectCredential([], [makeCertBag({})])).toThrow(CertificateError);
   });
