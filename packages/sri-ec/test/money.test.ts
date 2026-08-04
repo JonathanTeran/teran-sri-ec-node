@@ -33,6 +33,20 @@ describe('money', () => {
       expect(() => toCents('abc')).toThrow(ValidationError);
     });
 
+    it('el message del ValidationError no duplica el prefijo "Monto inválido"', () => {
+      expect.assertions(2);
+      try {
+        toCents('abc');
+      } catch (err) {
+        const message = (err as ValidationError).message;
+        const occurrences = message.split('Monto inválido').length - 1;
+        expect(occurrences).toBe(1);
+        expect(message).toBe(
+          "Monto inválido: 'abc': Debe ser un número no negativo con hasta 6 decimales.",
+        );
+      }
+    });
+
     it('lanza ValidationError con un monto negativo', () => {
       expect(() => toCents('-1.00')).toThrow(ValidationError);
     });

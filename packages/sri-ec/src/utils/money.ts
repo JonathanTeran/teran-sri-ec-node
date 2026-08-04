@@ -27,7 +27,7 @@ export function isMonto(s: string): boolean {
 export function toCents(monto: string): number {
   if (!isMonto(monto)) {
     throw new ValidationError(`Monto inválido: '${monto}'`, [
-      `Monto inválido: '${monto}'. Debe ser un número no negativo con hasta 6 decimales.`,
+      'Debe ser un número no negativo con hasta 6 decimales.',
     ]);
   }
 
