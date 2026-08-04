@@ -18,10 +18,21 @@ export interface ImpuestoDocSustentoRow {
   codigoPorcentaje: string;
   baseImponible: string;
   tarifa: string;
-  factorProporcionalidad: string;
-  baseImponibleModificada: string;
+  /**
+   * `minOccurs="0"` en el XSD del SRI: solo aplica a contribuyentes con
+   * proporcionalidad de crédito tributario. Opcional para no obligar a
+   * inventar un placeholder cuando no corresponde.
+   */
+  factorProporcionalidad?: string;
+  /** `minOccurs="0"` en el XSD del SRI: solo aplica junto a `factorProporcionalidad`. */
+  baseImponibleModificada?: string;
   valorImpuesto: string;
-  [extra: string]: string;
+  /**
+   * Cualquier campo SRI adicional. `undefined` se admite (y se omite al
+   * serializar) para que los campos opcionales de arriba encajen con el
+   * índice; una fila nunca emite un elemento por una clave sin valor.
+   */
+  [extra: string]: string | undefined;
 }
 
 /**

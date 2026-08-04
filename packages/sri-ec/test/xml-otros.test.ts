@@ -11,7 +11,7 @@ import type {
   NotaDebito,
   Retencion,
 } from '../src/documents/index.js';
-import { ValidationError } from '../src/errors/index.js';
+import { SriError, ValidationError } from '../src/errors/index.js';
 import { generarClaveAcceso } from '../src/utils/clave-acceso.js';
 import { GuiaRemisionXmlSerializer } from '../src/xml/guia-remision.serializer.js';
 import { serializerFor } from '../src/xml/index.js';
@@ -787,6 +787,44 @@ describe('RetencionXmlSerializer — campos opcionales no representables en PHP 
     expect(xml).not.toContain('<codigoRetencion>');
   });
 
+  it('omite factorProporcionalidad/baseImponibleModificada cuando no se proveen (minOccurs=0 en el XSD)', () => {
+    const base = retencionFixture.docsSustento[0]!;
+    const doc: Retencion = {
+      ...retencionFixture,
+      docsSustento: [
+        {
+          ...base,
+          impuestosDocSustento: [
+            {
+              codImpuestoDocSustento: '2',
+              codigoPorcentaje: '4',
+              baseImponible: '1000.00',
+              tarifa: '12.00',
+              valorImpuesto: '120.00',
+            },
+          ],
+        },
+      ],
+    };
+    const xml = new RetencionXmlSerializer().serialize(doc, claveRetencion);
+
+    // Ni elemento ni placeholder vacío: el campo simplemente no existe.
+    expect(xml).not.toContain('factorProporcionalidad');
+    expect(xml).not.toContain('baseImponibleModificada');
+    expect(xml).toContain('<valorImpuesto>120.00</valorImpuesto>');
+    // El resto de la fila se sigue serializando en orden.
+    expect(xml.indexOf('<tarifa>12.00</tarifa>')).toBeGreaterThan(
+      xml.indexOf('<baseImponible>1000.00</baseImponible>'),
+    );
+  });
+
+  it('sigue emitiéndolos cuando sí se proveen', () => {
+    const xml = new RetencionXmlSerializer().serialize(retencionFixture, claveRetencion);
+
+    expect(xml).toContain('<factorProporcionalidad>1.00</factorProporcionalidad>');
+    expect(xml).toContain('<baseImponibleModificada>1000.00</baseImponibleModificada>');
+  });
+
   it('serializa un campo SRI adicional no listado en el tipo (vía el índice [extra: string]) en cualquiera de las 3 filas genéricas', () => {
     const doc: Retencion = {
       ...retencionFixture,
@@ -860,10 +898,76 @@ describe('serializerFor — los 6 tipos de comprobante', () => {
     ).toContain('<comprobanteRetencion id="comprobante" version="2.0.0">');
   });
 
-  it('lanza ValidationError con mensaje claro para un código fuera del catálogo de 6 comprobantes', () => {
+  it('lanza SriError (no ValidationError) con mensaje claro para un código fuera del catálogo de 6 comprobantes', () => {
     const tipoInvalido = '99' as TipoComprobante;
 
-    expect(() => serializerFor(tipoInvalido)).toThrow(ValidationError);
+    expect(() => serializerFor(tipoInvalido)).toThrow(SriError);
     expect(() => serializerFor(tipoInvalido)).toThrow(/99/);
+
+    // No es un error de datos de usuario: un manejador que traduzca
+    // ValidationError a un 4xx no debe tragarse este bug de programación.
+    expect(() => serializerFor(tipoInvalido)).not.toThrow(ValidationError);
+
+    const err = (() => {
+      try {
+        serializerFor(tipoInvalido);
+        return undefined;
+      } catch (e) {
+        return e as SriError;
+      }
+    })();
+    expect(err?.code).toBe('UNSUPPORTED_COMPROBANTE');
+  });
+});
+
+describe('Orden de colecciones multi-elemento', () => {
+  it('RetencionXmlSerializer serializa 2 docsSustento en el orden del array', () => {
+    const base = retencionFixture.docsSustento[0]!;
+    const doc: Retencion = {
+      ...retencionFixture,
+      docsSustento: [
+        { ...base, numDocSustento: '001-001-000000100' },
+        {
+          ...base,
+          numDocSustento: '001-001-000000200',
+          fechaEmisionDocSustento: '02/08/2026',
+          totalSinImpuestos: '500.00',
+          importeTotal: '560.00',
+        },
+      ],
+    };
+    const xml = new RetencionXmlSerializer().serialize(doc, claveRetencion);
+
+    expect(xml.match(/<docSustento>/g)).toHaveLength(2);
+    const iPrimero = xml.indexOf('001-001-000000100');
+    const iSegundo = xml.indexOf('001-001-000000200');
+    expect(iPrimero).toBeGreaterThan(-1);
+    expect(iSegundo).toBeGreaterThan(iPrimero);
+    // Cada docSustento lleva sus propios totales, en su propio bloque.
+    expect(xml.indexOf('<totalSinImpuestos>500.00</totalSinImpuestos>')).toBeGreaterThan(iSegundo);
+  });
+
+  it('GuiaRemisionXmlSerializer serializa 2 destinatarios en el orden del array', () => {
+    const base = guiaRemisionFixture.destinatarios[0]!;
+    const doc: GuiaRemision = {
+      ...guiaRemisionFixture,
+      destinatarios: [
+        { ...base, razonSocialDestinatario: 'PRIMER DESTINATARIO' },
+        {
+          ...base,
+          razonSocialDestinatario: 'SEGUNDO DESTINATARIO',
+          identificacionDestinatario: '1790011002001',
+          dirDestinatario: 'Av. Siempre Viva 742, Guayaquil',
+        },
+      ],
+    };
+    const xml = new GuiaRemisionXmlSerializer().serialize(doc, claveGuiaRemision);
+
+    expect(xml.match(/<destinatario>/g)).toHaveLength(2);
+    const iPrimero = xml.indexOf('PRIMER DESTINATARIO');
+    const iSegundo = xml.indexOf('SEGUNDO DESTINATARIO');
+    expect(iPrimero).toBeGreaterThan(-1);
+    expect(iSegundo).toBeGreaterThan(iPrimero);
+    expect(xml.indexOf('Av. Siempre Viva 742, Guayaquil')).toBeGreaterThan(iPrimero);
   });
 });

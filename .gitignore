@@ -3,3 +3,4 @@ dist
 coverage
 .superpowers
 *.tsbuildinfo
+.DS_Store

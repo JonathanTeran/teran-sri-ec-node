@@ -150,6 +150,45 @@ describe('schemaFor(Retencion)', () => {
     expect(errors.some((e) => e.startsWith('docsSustento:'))).toBe(true);
   });
 
+  it('acepta impuestosDocSustento sin factorProporcionalidad ni baseImponibleModificada (minOccurs=0 en el XSD)', () => {
+    const result = schemaFor(TipoComprobante.Retencion).safeParse({
+      ...retencionFixture,
+      docsSustento: [
+        {
+          ...retencionFixture.docsSustento[0],
+          impuestosDocSustento: [
+            {
+              codImpuestoDocSustento: '2',
+              codigoPorcentaje: '4',
+              baseImponible: '1000.00',
+              tarifa: '12.00',
+              valorImpuesto: '120.00',
+            },
+          ],
+        },
+      ],
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('sigue rechazando un factorProporcionalidad presente pero mal formado', () => {
+    const errors = errorsFor(TipoComprobante.Retencion, {
+      ...retencionFixture,
+      docsSustento: [
+        {
+          ...retencionFixture.docsSustento[0],
+          impuestosDocSustento: [
+            {
+              ...retencionFixture.docsSustento[0].impuestosDocSustento[0],
+              factorProporcionalidad: 'no-es-un-monto',
+            },
+          ],
+        },
+      ],
+    });
+    expect(errors.some((e) => e.includes('factorProporcionalidad'))).toBe(true);
+  });
+
   it('acepta campos SRI adicionales no listados en las filas de docSustento (índice string)', () => {
     const result = schemaFor(TipoComprobante.Retencion).safeParse({
       ...retencionFixture,

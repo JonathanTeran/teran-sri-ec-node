@@ -1,6 +1,6 @@
 import { TipoComprobante } from '../catalogs/index.js';
 import type { Comprobante } from '../documents/index.js';
-import { ValidationError } from '../errors/index.js';
+import { SriError } from '../errors/index.js';
 import { FacturaXmlSerializer } from './factura.serializer.js';
 import { GuiaRemisionXmlSerializer } from './guia-remision.serializer.js';
 import { LiquidacionCompraXmlSerializer } from './liquidacion-compra.serializer.js';
@@ -57,17 +57,22 @@ const REGISTRY: Partial<Record<TipoComprobante, XmlSerializer<Comprobante>>> = {
  * `schemas/index.ts`. Los 6 tipos de comprobante soportados por el paquete
  * están registrados (ver `REGISTRY`).
  *
- * @throws ValidationError si `tipo` no corresponde a ninguno de los 6
- * comprobantes soportados por el paquete.
+ * @throws SriError (código `UNSUPPORTED_COMPROBANTE`) si `tipo` no
+ * corresponde a ninguno de los 6 comprobantes soportados. Deliberadamente
+ * NO es un `ValidationError`: llegar aquí significa que el discriminante
+ * `tipo` del documento no pertenece a la unión `Comprobante`, es decir un
+ * error de programación (o un cast forzado), no un dato de usuario mal
+ * formado. Emitirlo como `ValidationError` haría que lo tragaran los
+ * manejadores que traducen validaciones a errores 4xx del usuario final, en
+ * vez de aflorar como el bug que es.
  */
 export function serializerFor(tipo: TipoComprobante): XmlSerializer<Comprobante> {
   const serializer = REGISTRY[tipo];
   if (!serializer) {
-    throw new ValidationError(
-      `No hay serializador XML registrado para el tipo de comprobante '${tipo}'.`,
-      [
-        'Los serializadores se añaden progresivamente por tarea; verifique que el tipo sea correcto o que el comprobante ya esté soportado.',
-      ],
+    throw new SriError(
+      `No hay serializador XML registrado para el tipo de comprobante '${tipo}'. ` +
+        'Los tipos soportados son los 6 del catálogo TipoComprobante (01, 03, 04, 05, 06, 07).',
+      'UNSUPPORTED_COMPROBANTE',
     );
   }
   return serializer;

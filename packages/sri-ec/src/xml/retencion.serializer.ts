@@ -150,15 +150,22 @@ export class RetencionXmlSerializer {
    * `null` (elemento vacío `<el></el>`) en vez de dejar que
    * `XmlBuilder.child()` lance, igual que `$v !== '' ? (string) $v : null`
    * en PHP.
+   *
+   * Un valor `undefined` (campo opcional del XSD explícitamente ausente,
+   * p.ej. `factorProporcionalidad`) NO emite elemento: `minOccurs="0"`
+   * significa omitirlo, no escribirlo vacío.
    */
   private writeRow(
     b: XmlBuilder,
     parent: XmlElement,
     name: string,
-    row: Record<string, string>,
+    row: Record<string, string | undefined>,
   ): void {
     const item = b.child(parent, name);
     for (const [k, v] of Object.entries(row)) {
+      if (v === undefined) {
+        continue;
+      }
       b.child(item, k, v !== '' ? v : null);
     }
   }

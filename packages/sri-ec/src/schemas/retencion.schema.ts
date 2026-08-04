@@ -33,11 +33,12 @@ export const impuestoDocSustentoRowSchema = z
     codigoPorcentaje: nonEmptyString,
     baseImponible: montoField,
     tarifa: montoField,
-    factorProporcionalidad: montoField,
-    baseImponibleModificada: montoField,
+    // `minOccurs="0"` en el XSD: opcionales, no placeholders obligatorios.
+    factorProporcionalidad: montoField.optional(),
+    baseImponibleModificada: montoField.optional(),
     valorImpuesto: montoField,
   })
-  .catchall(z.string()) satisfies z.ZodType<ImpuestoDocSustentoRow>;
+  .catchall(z.string().optional()) satisfies z.ZodType<ImpuestoDocSustentoRow>;
 
 /**
  * Fila de `retenciones` (port de `DocSustento::$retenciones`). Mismos
