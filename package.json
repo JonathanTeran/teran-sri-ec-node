@@ -3,7 +3,8 @@
   "version": "0.1.0",
   "private": true,
   "workspaces": [
-    "packages/*"
+    "packages/sri-ec",
+    "packages/nestjs-sri-ec"
   ],
   "scripts": {
     "build": "npm run build --workspaces --if-present",
