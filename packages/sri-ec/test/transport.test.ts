@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { Ambiente } from '../src/catalogs/index.js';
-import { CommunicationError } from '../src/errors/index.js';
+import { CommunicationError, ValidationError } from '../src/errors/index.js';
 import { buildAuthorizationEnvelope, buildReceptionEnvelope } from '../src/transport/soap-envelope.js';
 import { parseAuthorization, parseReception } from '../src/transport/soap-response-parser.js';
 import { FetchSoapTransport } from '../src/transport/fetch-soap-transport.js';
@@ -10,6 +10,9 @@ import { SRI_URLS } from '../src/transport/urls.js';
 // ---------------------------------------------------------------------------
 // Fixtures — respuestas SOAP reales del SRI (offline), como strings.
 // ---------------------------------------------------------------------------
+
+/** Clave de acceso válida en el wire: exactamente 49 dígitos. */
+const CLAVE_49 = '2601202601179001100112345678901234567890123456789';
 
 const RECIBIDA_XML = `<?xml version="1.0" encoding="UTF-8"?>
 <soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
@@ -183,14 +186,29 @@ describe('soap-envelope', () => {
     expect(env).toContain(`<xml>${Buffer.from(signed, 'utf-8').toString('base64')}</xml>`);
   });
 
-  it('buildAuthorizationEnvelope lleva la clave de acceso sin transformar', () => {
-    const env = buildAuthorizationEnvelope('2601202601179001100112345678901234567890123456');
+  it('buildAuthorizationEnvelope lleva la clave de acceso (49 dígitos) sin transformar', () => {
+    const env = buildAuthorizationEnvelope(CLAVE_49);
 
     expect(env).toContain('http://ec.gob.sri.ws.autorizacion');
     expect(env).toContain('autorizacionComprobante');
-    expect(env).toContain(
-      '<claveAccesoComprobante>2601202601179001100112345678901234567890123456</claveAccesoComprobante>',
-    );
+    expect(env).toContain(`<claveAccesoComprobante>${CLAVE_49}</claveAccesoComprobante>`);
+  });
+
+  it.each([
+    ['inyección XML cerrando la etiqueta', '</claveAccesoComprobante><evil>x</evil><a>'],
+    ['inyección con comillas y &', '1234567890&"<script>'],
+    ['clave demasiado corta', '2601202601179001100112345678901234567890123456'],
+    ['clave demasiado larga', `${CLAVE_49}0`],
+    ['clave con letras', `${CLAVE_49.slice(0, 48)}X`],
+    ['cadena vacía', ''],
+  ])('buildAuthorizationEnvelope rechaza %s con ValidationError', (_caso, payload) => {
+    expect(() => buildAuthorizationEnvelope(payload)).toThrow(ValidationError);
+  });
+
+  it('buildAuthorizationEnvelope no permite reescribir el cuerpo SOAP', () => {
+    const payload = `${CLAVE_49}</claveAccesoComprobante><inyectado/>`;
+
+    expect(() => buildAuthorizationEnvelope(payload)).toThrow(ValidationError);
   });
 });
 
@@ -319,10 +337,21 @@ function okResponse(body: string): Response {
   return new Response(body, { status: 200 });
 }
 
+/**
+ * `vi.fn(async () => …)` infiere una tupla de argumentos VACÍA, así que
+ * `mock.calls[0]` queda tipado como `[]` y desestructurar `[url, init]`
+ * falla el typecheck (TS2493). Tipando el doble como `typeof fetch` los
+ * argumentos registrados son los reales de `fetch` — y de paso desaparece el
+ * `as unknown as typeof fetch` al inyectarlo.
+ */
+function fetchMockOf(impl: () => Promise<Response>) {
+  return vi.fn<typeof fetch>(impl);
+}
+
 describe('FetchSoapTransport', () => {
   it('enviar() hace POST a la URL de recepción de pruebas con los headers y el XML en base64', async () => {
-    const fetchMock = vi.fn(async (_url: string | URL, _init?: RequestInit) => okResponse(RECIBIDA_XML));
-    const transport = new FetchSoapTransport({ fetch: fetchMock as unknown as typeof fetch });
+    const fetchMock = fetchMockOf(async () => okResponse(RECIBIDA_XML));
+    const transport = new FetchSoapTransport({ fetch: fetchMock });
 
     const outcome = await transport.enviar('<factura/>', Ambiente.Pruebas);
 
@@ -340,13 +369,10 @@ describe('FetchSoapTransport', () => {
   });
 
   it('autorizar() usa el endpoint de producción (cel, no celcer) para Ambiente.Produccion', async () => {
-    const fetchMock = vi.fn(async () => okResponse(AUTORIZADO_CDATA_XML));
-    const transport = new FetchSoapTransport({ fetch: fetchMock as unknown as typeof fetch });
+    const fetchMock = fetchMockOf(async () => okResponse(AUTORIZADO_CDATA_XML));
+    const transport = new FetchSoapTransport({ fetch: fetchMock });
 
-    const outcome = await transport.autorizar(
-      '2601202601179001100112345678901234567890123456',
-      Ambiente.Produccion,
-    );
+    const outcome = await transport.autorizar(CLAVE_49, Ambiente.Produccion);
 
     expect(outcome.estado).toBe('AUTORIZADO');
     const [url] = fetchMock.mock.calls[0]!;
@@ -355,12 +381,57 @@ describe('FetchSoapTransport', () => {
     expect(String(url)).not.toContain('celcer');
   });
 
+  it.each([
+    ['una clave con payload de inyección XML', '</claveAccesoComprobante><evil/>'],
+    ['una clave de 46 dígitos', '2601202601179001100112345678901234567890123456'],
+    ['una clave con letras', `${CLAVE_49.slice(0, 48)}X`],
+  ])('autorizar() rechaza %s con ValidationError sin llegar a hacer fetch', async (_caso, clave) => {
+    const fetchMock = fetchMockOf(async () => okResponse(AUTORIZADO_CDATA_XML));
+    const transport = new FetchSoapTransport({ fetch: fetchMock });
+
+    await expect(transport.autorizar(clave, Ambiente.Pruebas)).rejects.toBeInstanceOf(ValidationError);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('autorizar() deja pasar una clave válida de 49 dígitos sin alterarla en el envelope', async () => {
+    const fetchMock = fetchMockOf(async () => okResponse(AUTORIZADO_CDATA_XML));
+    const transport = new FetchSoapTransport({ fetch: fetchMock });
+
+    await transport.autorizar(CLAVE_49, Ambiente.Pruebas);
+
+    const [, init] = fetchMock.mock.calls[0]!;
+    expect(String(init?.body)).toContain(
+      `<claveAccesoComprobante>${CLAVE_49}</claveAccesoComprobante>`,
+    );
+  });
+
   it('HTTP 500 lanza CommunicationError con el código de estado en el mensaje', async () => {
-    const fetchMock = vi.fn(async () => new Response('Internal Server Error', { status: 500 }));
-    const transport = new FetchSoapTransport({ fetch: fetchMock as unknown as typeof fetch });
+    const fetchMock = fetchMockOf(async () => new Response('Internal Server Error', { status: 500 }));
+    const transport = new FetchSoapTransport({ fetch: fetchMock });
 
     await expect(transport.enviar('<factura/>', Ambiente.Pruebas)).rejects.toThrow(CommunicationError);
     await expect(transport.enviar('<factura/>', Ambiente.Pruebas)).rejects.toThrow('HTTP 500');
+  });
+
+  it('HTTP != 200 cancela el cuerpo de la respuesta antes de lanzar (no deja la conexión colgada)', async () => {
+    const response = new Response('Internal Server Error', { status: 500 });
+    const cancel = vi.spyOn(response.body!, 'cancel');
+    const fetchMock = fetchMockOf(async () => response);
+    const transport = new FetchSoapTransport({ fetch: fetchMock });
+
+    await expect(transport.enviar('<factura/>', Ambiente.Pruebas)).rejects.toThrow(CommunicationError);
+
+    expect(cancel).toHaveBeenCalledTimes(1);
+    expect(response.bodyUsed || response.body?.locked).toBeTruthy();
+  });
+
+  it('si cancelar el cuerpo falla, sigue lanzando el CommunicationError del HTTP', async () => {
+    const response = new Response('Internal Server Error', { status: 503 });
+    vi.spyOn(response.body!, 'cancel').mockRejectedValue(new Error('stream ya bloqueado'));
+    const fetchMock = fetchMockOf(async () => response);
+    const transport = new FetchSoapTransport({ fetch: fetchMock });
+
+    await expect(transport.enviar('<factura/>', Ambiente.Pruebas)).rejects.toThrow('HTTP 503');
   });
 
   it('el rechazo del fetch subyacente (red caída) se envuelve en CommunicationError', async () => {

@@ -1,6 +1,10 @@
 import type { Ambiente } from '../catalogs/index.js';
 import { CommunicationError } from '../errors/index.js';
-import { buildAuthorizationEnvelope, buildReceptionEnvelope } from './soap-envelope.js';
+import {
+  assertClaveAccesoWireSegura,
+  buildAuthorizationEnvelope,
+  buildReceptionEnvelope,
+} from './soap-envelope.js';
 import { parseAuthorization, parseReception } from './soap-response-parser.js';
 import type { AuthorizationOutcome, ReceptionOutcome, SriTransport } from './types.js';
 import { SRI_URLS } from './urls.js';
@@ -40,11 +44,17 @@ export class FetchSoapTransport implements SriTransport {
     return parseReception(body);
   }
 
+  /**
+   * @throws ValidationError si `claveAcceso` no son exactamente 49 dígitos —
+   * se comprueba aquí, antes de resolver el endpoint o abrir la conexión, para
+   * que ningún valor no confiable llegue a interpolarse en el envelope SOAP.
+   */
   async autorizar(
     claveAcceso: string,
     ambiente: Ambiente,
     opts?: { signal?: AbortSignal },
   ): Promise<AuthorizationOutcome> {
+    assertClaveAccesoWireSegura(claveAcceso);
     const body = await this.post(
       SRI_URLS[ambiente].autorizacion,
       buildAuthorizationEnvelope(claveAcceso),
@@ -87,6 +97,11 @@ export class FetchSoapTransport implements SriTransport {
       });
 
       if (response.status !== 200) {
+        // El cuerpo de una respuesta de error también hay que consumirlo o
+        // cancelarlo: undici mantiene viva la conexión (y el socket del pool)
+        // mientras el `ReadableStream` siga sin drenar. Se ignora cualquier
+        // fallo del cancel — el error relevante es el HTTP, no el descarte.
+        await response.body?.cancel().catch(() => undefined);
         throw new CommunicationError(`El SRI respondió HTTP ${response.status}`);
       }
 
