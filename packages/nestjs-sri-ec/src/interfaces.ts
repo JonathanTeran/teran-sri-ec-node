@@ -1,5 +1,5 @@
 import type { ModuleMetadata } from '@nestjs/common';
-import type { Ambiente, Certificate, SriTransport } from '@amephia/sri-ec';
+import type { Ambiente, Certificate, SriTransport } from 'sri-ec';
 
 /**
  * Configuración **no sensible** del módulo: lo único que queda registrado en
@@ -21,7 +21,7 @@ export interface SriRuntimeOptions {
 /**
  * Opciones de {@link SriModule.forRoot}. Solo `ambiente` y `certificate` son
  * obligatorios — el resto tiene un default sensato, igual que
- * `SriClientOptions` en `@amephia/sri-ec`.
+ * `SriClientOptions` en `sri-ec`.
  */
 export interface SriModuleOptions extends SriRuntimeOptions {
   /**

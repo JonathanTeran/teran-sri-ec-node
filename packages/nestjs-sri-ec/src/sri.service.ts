@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { BatchEmitter, type BatchEmitterOptions, type Comprobante, SriClient } from '@amephia/sri-ec';
+import { BatchEmitter, type BatchEmitterOptions, type Comprobante, SriClient } from 'sri-ec';
 
 import type { SriRuntimeOptions } from './interfaces.js';
 import { SRI_CLIENT, SRI_MODULE_OPTIONS } from './tokens.js';
@@ -9,7 +9,7 @@ import { SRI_CLIENT, SRI_MODULE_OPTIONS } from './tokens.js';
  * {@link SriModule} como provider inyectable, más `createBatch()` para
  * obtener un `BatchEmitter` preconfigurado con el mismo `ambiente`/
  * `transport` del módulo. Sin lógica propia — cada método delega
- * íntegramente en `@amephia/sri-ec`; este paquete es wiring de DI, no una
+ * íntegramente en `sri-ec`; este paquete es wiring de DI, no una
  * reimplementación.
  */
 @Injectable()

@@ -1,5 +1,5 @@
 /**
- * Punto de entrada público de `@amephia/sri-ec`. Re-exporta cada módulo
+ * Punto de entrada público de `sri-ec`. Re-exporta cada módulo
  * interno tal cual (mismo patrón de barrel que `documents/index.ts`,
  * `xml/index.ts`, etc.) más {@link SriClient}, la fachada de orquestación
  * de Task 12, y `batch` ({@link BatchEmitter}, Task 13) — no hay superficie

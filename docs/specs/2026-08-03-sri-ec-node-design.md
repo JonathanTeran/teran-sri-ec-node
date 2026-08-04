@@ -1,4 +1,4 @@
-# Diseño: @amephia/sri-ec (Node.js/TypeScript) + @amephia/nestjs-sri-ec
+# Diseño: sri-ec (Node.js/TypeScript) + sri-ec-nestjs
 
 **Fecha:** 2026-08-03
 **Estado:** Aprobado por Jonathan Terán
@@ -14,7 +14,7 @@ integración rápida.
 
 | Decisión | Elección |
 |----------|----------|
-| Forma | Core agnóstico (`@amephia/sri-ec`) + módulo Nest (`@amephia/nestjs-sri-ec`) |
+| Forma | Core agnóstico (`sri-ec`) + módulo Nest (`sri-ec-nestjs`) |
 | Alcance v1 | Paridad completa: 6 comprobantes, firma XAdES-BES, SOAP, batch, clave de acceso, RUC |
 | API | Solo API tipada estilo v2 PHP. Sin API de arrays. Dominio en español |
 | Validación | zod (rol del XSD) + BusinessValidator portado. Sin binarios nativos |
@@ -30,7 +30,7 @@ teran-sri-ec-node/
 ├── tsconfig.base.json
 ├── docs/specs/
 └── packages/
-    ├── sri-ec/              # @amephia/sri-ec
+    ├── sri-ec/              # sri-ec
     │   ├── src/
     │   │   ├── index.ts
     │   │   ├── sri-client.ts
@@ -50,7 +50,7 @@ teran-sri-ec-node/
     │   │   └── errors/      # SriError + ValidationError, SignatureError,
     │   │                    #   CertificateError, CommunicationError
     │   └── test/            # vitest + fixtures (XMLs golden del paquete PHP)
-    └── nestjs-sri-ec/       # @amephia/nestjs-sri-ec
+    └── nestjs-sri-ec/       # sri-ec-nestjs
         └── src/
             ├── index.ts
             ├── sri.module.ts     # forRoot / forRootAsync
@@ -66,14 +66,14 @@ teran-sri-ec-node/
 - `fast-xml-parser` — parseo de respuestas SOAP.
 - `zod` — validación estructural de documentos (rol del XSD).
 
-`@amephia/nestjs-sri-ec`: peerDependencies `@nestjs/common` ^10 || ^11 y
-`@amephia/sri-ec`.
+`sri-ec-nestjs`: peerDependencies `@nestjs/common` ^10 || ^11 y
+`sri-ec`.
 
 ## API pública del core
 
 ```ts
-import { SriClient, Ambiente, loadCertificate, BatchEmitter } from '@amephia/sri-ec';
-import type { Factura } from '@amephia/sri-ec';
+import { SriClient, Ambiente, loadCertificate, BatchEmitter } from 'sri-ec';
+import type { Factura } from 'sri-ec';
 
 const cert = loadCertificate(p12Buffer, 'clave');
 const sri = new SriClient({ ambiente: Ambiente.Pruebas, certificate: cert });

@@ -4,8 +4,8 @@
     "noEmit": true,
     "baseUrl": ".",
     "paths": {
-      "@amephia/sri-ec": ["../packages/sri-ec/src/index.ts"],
-      "@amephia/nestjs-sri-ec": ["../packages/nestjs-sri-ec/src/index.ts"]
+      "sri-ec": ["../packages/sri-ec/src/index.ts"],
+      "sri-ec-nestjs": ["../packages/nestjs-sri-ec/src/index.ts"]
     }
   },
   "include": ["*.ts"]

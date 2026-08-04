@@ -15,13 +15,13 @@ import { describe, expect, it, vi } from 'vitest';
  * `certificate` viene en esa forma (en vez de un `Certificate` ya cargado),
  * sin dejar de ejercitar la carga real del certificado de prueba.
  */
-vi.mock('@amephia/sri-ec', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@amephia/sri-ec')>();
+vi.mock('sri-ec', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('sri-ec')>();
   return { ...actual, loadCertificate: vi.fn(actual.loadCertificate) };
 });
 
-import * as sriEc from '@amephia/sri-ec';
-import { Ambiente, type Certificate, type SriTransport } from '@amephia/sri-ec';
+import * as sriEc from 'sri-ec';
+import { Ambiente, type Certificate, type SriTransport } from 'sri-ec';
 
 import { SriModule } from '../src/sri.module.js';
 import { SriService } from '../src/sri.service.js';

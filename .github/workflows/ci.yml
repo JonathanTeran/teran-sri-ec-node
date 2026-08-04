@@ -30,7 +30,7 @@ jobs:
       - run: npm ci
 
       # `build` va primero: el paquete NestJS consume los tipos de
-      # @amephia/sri-ec desde su dist/, así que typecheck y test lo necesitan.
+      # sri-ec desde su dist/, así que typecheck y test lo necesitan.
       - run: npm run build
 
       - run: npm run typecheck

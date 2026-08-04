@@ -1,6 +1,6 @@
 import type { DynamicModule, Provider } from '@nestjs/common';
 import { Module } from '@nestjs/common';
-import { type Certificate, loadCertificate, SriClient } from '@amephia/sri-ec';
+import { type Certificate, loadCertificate, SriClient } from 'sri-ec';
 
 import type { SriModuleAsyncOptions, SriModuleOptions, SriRuntimeOptions } from './interfaces.js';
 import { SriService } from './sri.service.js';
@@ -72,7 +72,7 @@ const asyncRuntimeOptionsProvider: Provider = {
 };
 
 /**
- * Módulo NestJS de `@amephia/sri-ec`: wiring de DI puro (sin lógica de
+ * Módulo NestJS de `sri-ec`: wiring de DI puro (sin lógica de
  * negocio propia) que expone {@link SriService}/`SRI_CLIENT` configurados a
  * partir de {@link SriModuleOptions}. Mismo patrón `forRoot()`/
  * `forRootAsync()` que `ConfigModule`/`TypeOrmModule` en el ecosistema Nest.

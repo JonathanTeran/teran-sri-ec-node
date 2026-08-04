@@ -1,6 +1,6 @@
-# 🇪🇨 @amephia/sri-ec (Node.js / TypeScript)
+# 🇪🇨 sri-ec (Node.js / TypeScript)
 
-[![npm version](https://img.shields.io/npm/v/%40amephia%2Fsri-ec.svg?style=flat-square)](https://www.npmjs.com/package/@amephia/sri-ec) [![Licencia de Software](https://img.shields.io/badge/license-MIT-brightgreen.svg?style=flat-square)](LICENSE.md) [![Node.js](https://img.shields.io/badge/node-%3E%3D%2020-339933.svg?style=flat-square&logo=node.js&logoColor=white)](https://nodejs.org/) [![Invítame un café](https://img.shields.io/badge/PayPal-Inv%C3%ADtame%20un%20caf%C3%A9-00457C?style=flat-square&logo=paypal&logoColor=white)](https://paypal.me/teranjona)
+[![npm version](https://img.shields.io/npm/v/sri-ec.svg?style=flat-square)](https://www.npmjs.com/package/sri-ec) [![Licencia de Software](https://img.shields.io/badge/license-MIT-brightgreen.svg?style=flat-square)](LICENSE.md) [![Node.js](https://img.shields.io/badge/node-%3E%3D%2020-339933.svg?style=flat-square&logo=node.js&logoColor=white)](https://nodejs.org/) [![Invítame un café](https://img.shields.io/badge/PayPal-Inv%C3%ADtame%20un%20caf%C3%A9-00457C?style=flat-square&logo=paypal&logoColor=white)](https://paypal.me/teranjona)
 
 Librería profesional para **Facturación Electrónica del SRI Ecuador** en Node.js/TypeScript. Es el port oficial de [`amephia/sri-ec`](https://packagist.org/packages/amephia/sri-ec) (PHP) — misma API 2.0 tipada, misma firma XAdES-BES **verificada byte a byte** contra el paquete original, cero dependencias nativas.
 
@@ -10,8 +10,8 @@ Este repositorio es un **monorepo npm workspaces** con dos paquetes:
 
 | Paquete | Descripción |
 |---|---|
-| [`@amephia/sri-ec`](packages/sri-ec) | Núcleo: documentos, validación, firma, transporte SOAP, envío masivo. Agnóstico de framework. |
-| [`@amephia/nestjs-sri-ec`](packages/nestjs-sri-ec) | Módulo de inyección de dependencias para NestJS sobre el núcleo (`forRoot`/`forRootAsync`). |
+| [`sri-ec`](packages/sri-ec) | Núcleo: documentos, validación, firma, transporte SOAP, envío masivo. Agnóstico de framework. |
+| [`sri-ec-nestjs`](packages/nestjs-sri-ec) | Módulo de inyección de dependencias para NestJS sobre el núcleo (`forRoot`/`forRootAsync`). |
 
 ## ✨ Características Principales
 
@@ -24,7 +24,7 @@ Este repositorio es un **monorepo npm workspaces** con dos paquetes:
 - ✅ **Envío masivo (`BatchEmitter`)** con reintentos y backoff exponencial configurables.
 - ✅ **Validación de RUC** local (compatible con el comportamiento del PHP) + un algoritmo estricto opt-in (módulo 10/11 real) + verificación online con fallback.
 - ✅ **Dual ESM + CommonJS** con tipos TypeScript incluidos (`.d.ts`/`.d.cts`), cero dependencias nativas (nada de `node-gyp`).
-- ✅ **Módulo NestJS opcional** (`@amephia/nestjs-sri-ec`) con el patrón `forRoot()`/`forRootAsync()` estándar del ecosistema Nest.
+- ✅ **Módulo NestJS opcional** (`sri-ec-nestjs`) con el patrón `forRoot()`/`forRootAsync()` estándar del ecosistema Nest.
 
 ## 🔐 Certificados de Firma Soportados
 
@@ -57,7 +57,7 @@ Los 6 se construyen como objetos TypeScript tipados (no arrays) y se emiten con 
 ```mermaid
 sequenceDiagram
     participant App as Tu App (Node/TS)
-    participant Lib as @amephia/sri-ec
+    participant Lib as sri-ec
     participant SRI_REST as SRI Online (REST)
     participant SRI_SOAP as SRI Recepción (SOAP)
 
@@ -95,9 +95,9 @@ sequenceDiagram
 ## 🚀 Instalación
 
 ```bash
-npm install @amephia/sri-ec
+npm install sri-ec
 # Opcional, solo para apps NestJS:
-npm install @amephia/nestjs-sri-ec
+npm install sri-ec-nestjs
 ```
 
 ## 🛠 Requisitos
@@ -120,7 +120,7 @@ import {
   TipoComprobante,
   TipoEmision,
   type Factura,
-} from '@amephia/sri-ec';
+} from 'sri-ec';
 
 const certificate = loadCertificate(readFileSync('firma.p12'), 'clave-del-p12');
 
@@ -196,7 +196,7 @@ Un `CommunicationError` (timeout, red caída, fallo SOAP) **no** se convierte en
 El error **lleva adjunto el comprobante en vuelo** (`claveAcceso` y `signedXml`) precisamente para que esa evidencia no se pierda:
 
 ```ts
-import { CommunicationError } from '@amephia/sri-ec';
+import { CommunicationError } from 'sri-ec';
 
 try {
   await sri.emit(factura);
@@ -235,7 +235,7 @@ Acepta el mismo `claveAcceso` opcional que `emit()` (con la misma verificación)
 `BatchEmitter` trabaja sobre pares `(claveAcceso, signedXml)` ya listos. Para obtenerlos a partir de sus documentos, use `SriClient.prepare()` — es exactamente la mitad local de `emit()`:
 
 ```ts
-import { Ambiente, BatchEmitter, loadCertificate, SriClient } from '@amephia/sri-ec';
+import { Ambiente, BatchEmitter, loadCertificate, SriClient } from 'sri-ec';
 
 const certificate = loadCertificate(readFileSync('firma.p12'), process.env['SRI_P12_PASSWORD']!);
 const sri = new SriClient({ ambiente: Ambiente.Produccion, certificate });
@@ -255,7 +255,7 @@ console.log(batch.status()); // { PENDING: 0, SENT: 0, AUTHORIZED: 1, REJECTED: 
 **`BatchEmitter.run()` nunca espera internamente.** Cuando una pasada no logra avanzar ningún comprobante (p. ej. todos quedaron `EN_PROCESO`, esperando a que el SRI termine de procesarlos), `run()` retorna de inmediato — el *pacing* y la reinvocación son responsabilidad del caller (un worker de cola o un cron), exactamente igual que en el paquete PHP. Un worker mínimo:
 
 ```ts
-import { Ambiente, BatchEmitter, RetryPolicy } from '@amephia/sri-ec';
+import { Ambiente, BatchEmitter, RetryPolicy } from 'sri-ec';
 
 const retryPolicy = new RetryPolicy(); // maxAttempts=5, baseDelaySeconds=3, maxDelaySeconds=600
 const batch = new BatchEmitter({ ambiente: Ambiente.Produccion, retryPolicy });
@@ -288,7 +288,7 @@ En producción, reemplace el `setTimeout` recursivo por un job encolado con retr
 ### Validación de RUC
 
 ```ts
-import { validarRucLocal, validarRucChecksum, validarRucOnline } from '@amephia/sri-ec';
+import { validarRucLocal, validarRucChecksum, validarRucOnline } from 'sri-ec';
 
 validarRucLocal('1790011001001');                       // compatible con el PHP: solo estructura superficial
 validarRucLocal('1790011001001', { checksum: true });    // + módulo 10/11 real + código de provincia
@@ -316,13 +316,13 @@ Todos los **campos de los documentos** (`Factura`, `Retencion`, …) están en e
 
 `FetchSoapTransport` (por defecto, sobre `fetch` nativo) es la única implementación incluida — no hay equivalente al `SoapClientTransport` de `ext-soap` porque Node no lo necesita. `SriClient`/`BatchEmitter` aceptan cualquier objeto que implemente la interfaz `SriTransport` (`enviar`/`autorizar`), útil para inyectar un mock en tests o un transporte propio (p. ej. con retries/proxy).
 
-### NestJS (`@amephia/nestjs-sri-ec`)
+### NestJS (`sri-ec-nestjs`)
 
 ```ts
 import { readFileSync } from 'node:fs';
 import { Module } from '@nestjs/common';
-import { Ambiente } from '@amephia/sri-ec';
-import { SriModule } from '@amephia/nestjs-sri-ec';
+import { Ambiente } from 'sri-ec';
+import { SriModule } from 'sri-ec-nestjs';
 
 @Module({
   imports: [
@@ -342,8 +342,8 @@ export class AppModule {}
 
 ```ts
 import { Injectable } from '@nestjs/common';
-import type { Factura } from '@amephia/sri-ec';
-import { SriService } from '@amephia/nestjs-sri-ec';
+import type { Factura } from 'sri-ec';
+import { SriService } from 'sri-ec-nestjs';
 
 @Injectable()
 export class FacturacionService {
@@ -373,7 +373,7 @@ Como consecuencia, `SriModule.forRoot()` carga el certificado **al evaluar la de
 
 ```
 packages/
-├── sri-ec/                        # @amephia/sri-ec (núcleo)
+├── sri-ec/                        # sri-ec (núcleo)
 │   └── src/
 │       ├── catalogs/              # Ambiente, TipoComprobante, TipoEmision, FormaPago
 │       ├── documents/             # Factura, LiquidacionCompra, NotaCredito, NotaDebito, GuiaRemision, Retencion
@@ -386,7 +386,7 @@ packages/
 │       ├── emission/                # EmissionResult, EmissionStatus, Message
 │       ├── errors/                  # SriError y subclases (ValidationError, CertificateError, ...)
 │       └── sri-client.ts           # SriClient — orquestador de alto nivel
-└── nestjs-sri-ec/                  # @amephia/nestjs-sri-ec (wiring de DI, sin lógica propia)
+└── nestjs-sri-ec/                  # sri-ec-nestjs (wiring de DI, sin lógica propia)
     └── src/
         ├── sri.module.ts           # SriModule.forRoot()/forRootAsync()
         ├── sri.service.ts          # SriService — fachada inyectable de SriClient
@@ -495,7 +495,7 @@ npm test           # vitest run en ambos paquetes
 npm run typecheck  # tsc --noEmit sobre src + test de ambos paquetes, y examples/
 ```
 
-`npm run build` va antes que `typecheck`/`test`: `@amephia/nestjs-sri-ec` consume los tipos de `@amephia/sri-ec` desde su `dist/`. Es el mismo orden que ejecuta la CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml), matriz Node 20 y 22 en cada push y PR).
+`npm run build` va antes que `typecheck`/`test`: `sri-ec-nestjs` consume los tipos de `sri-ec` desde su `dist/`. Es el mismo orden que ejecuta la CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml), matriz Node 20 y 22 en cada push y PR).
 
 El `workspaces` de la raíz (`package.json`) es un **array explícito y ordenado** (`["packages/sri-ec", "packages/nestjs-sri-ec"]`), no un glob — al añadir un paquete nuevo hay que agregarlo manualmente a esa lista.
 

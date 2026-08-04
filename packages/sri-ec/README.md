@@ -1,6 +1,6 @@
-# @amephia/sri-ec
+# sri-ec
 
-[![npm version](https://img.shields.io/npm/v/%40amephia%2Fsri-ec.svg?style=flat-square)](https://www.npmjs.com/package/@amephia/sri-ec) [![Licencia MIT](https://img.shields.io/badge/license-MIT-brightgreen.svg?style=flat-square)](https://github.com/JonathanTeran/teran-sri-ec-node/blob/main/LICENSE.md) [![Node.js](https://img.shields.io/badge/node-%3E%3D%2020-339933.svg?style=flat-square&logo=node.js&logoColor=white)](https://nodejs.org/)
+[![npm version](https://img.shields.io/npm/v/sri-ec.svg?style=flat-square)](https://www.npmjs.com/package/sri-ec) [![Licencia MIT](https://img.shields.io/badge/license-MIT-brightgreen.svg?style=flat-square)](https://github.com/JonathanTeran/teran-sri-ec-node/blob/main/LICENSE.md) [![Node.js](https://img.shields.io/badge/node-%3E%3D%2020-339933.svg?style=flat-square&logo=node.js&logoColor=white)](https://nodejs.org/)
 
 Librería de **Facturación Electrónica del SRI Ecuador** para Node.js/TypeScript: documentos tipados, validación (zod + `BusinessValidator`), serialización XML, carga de certificados `.p12`, firma **XAdES-BES**, transporte SOAP sobre `fetch` nativo y envío masivo (`BatchEmitter`). Agnóstico de framework y sin dependencias nativas (nada de `node-gyp`).
 
@@ -20,7 +20,7 @@ Es el port oficial de [`amephia/sri-ec`](https://packagist.org/packages/amephia/
 ## Instalación
 
 ```bash
-npm install @amephia/sri-ec
+npm install sri-ec
 ```
 
 Requiere **Node.js >= 20**.
@@ -37,7 +37,7 @@ import {
   TipoComprobante,
   TipoEmision,
   type Factura,
-} from '@amephia/sri-ec';
+} from 'sri-ec';
 
 const certificate = loadCertificate(readFileSync('firma.p12'), process.env['SRI_P12_PASSWORD']!);
 const sri = new SriClient({ ambiente: Ambiente.Pruebas, certificate });
@@ -106,7 +106,7 @@ await miRepositorio.guardar(claveAcceso, signedXml);
 Un `CommunicationError` **no** se convierte en `EmissionResult` — se lanza, porque no permite saber si el comprobante llegó a procesarse. El error trae el comprobante en vuelo:
 
 ```ts
-import { CommunicationError } from '@amephia/sri-ec';
+import { CommunicationError } from 'sri-ec';
 
 try {
   await sri.emit(factura);
@@ -140,7 +140,7 @@ La referencia completa (envío masivo, transporte propio, troubleshooting de zon
 
 ## NestJS
 
-Para aplicaciones NestJS existe el módulo de inyección de dependencias complementario: [`@amephia/nestjs-sri-ec`](https://www.npmjs.com/package/@amephia/nestjs-sri-ec).
+Para aplicaciones NestJS existe el módulo de inyección de dependencias complementario: [`sri-ec-nestjs`](https://www.npmjs.com/package/sri-ec-nestjs).
 
 ## Licencia
 

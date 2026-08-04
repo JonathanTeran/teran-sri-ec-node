@@ -1,8 +1,8 @@
-# @amephia/nestjs-sri-ec
+# sri-ec-nestjs
 
-[![npm version](https://img.shields.io/npm/v/%40amephia%2Fnestjs-sri-ec.svg?style=flat-square)](https://www.npmjs.com/package/@amephia/nestjs-sri-ec) [![Licencia MIT](https://img.shields.io/badge/license-MIT-brightgreen.svg?style=flat-square)](https://github.com/JonathanTeran/teran-sri-ec-node/blob/main/LICENSE.md) [![Node.js](https://img.shields.io/badge/node-%3E%3D%2020-339933.svg?style=flat-square&logo=node.js&logoColor=white)](https://nodejs.org/)
+[![npm version](https://img.shields.io/npm/v/sri-ec-nestjs.svg?style=flat-square)](https://www.npmjs.com/package/sri-ec-nestjs) [![Licencia MIT](https://img.shields.io/badge/license-MIT-brightgreen.svg?style=flat-square)](https://github.com/JonathanTeran/teran-sri-ec-node/blob/main/LICENSE.md) [![Node.js](https://img.shields.io/badge/node-%3E%3D%2020-339933.svg?style=flat-square&logo=node.js&logoColor=white)](https://nodejs.org/)
 
-Módulo de inyección de dependencias para **NestJS** sobre [`@amephia/sri-ec`](https://www.npmjs.com/package/@amephia/sri-ec), la librería de **Facturación Electrónica del SRI Ecuador**. Wiring puro (`SriModule.forRoot()` / `forRootAsync()` + `SriService`), sin lógica de negocio propia: cada método de `SriService` delega íntegramente en el núcleo.
+Módulo de inyección de dependencias para **NestJS** sobre [`sri-ec`](https://www.npmjs.com/package/sri-ec), la librería de **Facturación Electrónica del SRI Ecuador**. Wiring puro (`SriModule.forRoot()` / `forRootAsync()` + `SriService`), sin lógica de negocio propia: cada método de `SriService` delega íntegramente en el núcleo.
 
 - 📖 **Documentación completa:** <https://github.com/JonathanTeran/teran-sri-ec-node>
 - 🐛 **Reportar un problema:** <https://github.com/JonathanTeran/teran-sri-ec-node/issues>
@@ -10,10 +10,10 @@ Módulo de inyección de dependencias para **NestJS** sobre [`@amephia/sri-ec`](
 ## Instalación
 
 ```bash
-npm install @amephia/sri-ec @amephia/nestjs-sri-ec
+npm install sri-ec sri-ec-nestjs
 ```
 
-Requiere **Node.js >= 20**. Peer dependencies: `@amephia/sri-ec@^0.1.0` y `@nestjs/common@^10 || ^11`.
+Requiere **Node.js >= 20**. Peer dependencies: `sri-ec@^0.1.0` y `@nestjs/common@^10 || ^11`.
 
 ## Uso
 
@@ -22,8 +22,8 @@ Requiere **Node.js >= 20**. Peer dependencies: `@amephia/sri-ec@^0.1.0` y `@nest
 ```ts
 import { readFileSync } from 'node:fs';
 import { Module } from '@nestjs/common';
-import { Ambiente } from '@amephia/sri-ec';
-import { SriModule } from '@amephia/nestjs-sri-ec';
+import { Ambiente } from 'sri-ec';
+import { SriModule } from 'sri-ec-nestjs';
 
 @Module({
   imports: [
@@ -49,8 +49,8 @@ export class AppModule {}
 
 ```ts
 import { Injectable } from '@nestjs/common';
-import type { Factura } from '@amephia/sri-ec';
-import { SriService } from '@amephia/nestjs-sri-ec';
+import type { Factura } from 'sri-ec';
+import { SriService } from 'sri-ec-nestjs';
 
 @Injectable()
 export class FacturacionService {
@@ -74,8 +74,8 @@ export class FacturacionService {
 
 ```ts
 import { ConfigModule, ConfigService } from '@nestjs/config';
-import { Ambiente, loadCertificate } from '@amephia/sri-ec';
-import { SriModule } from '@amephia/nestjs-sri-ec';
+import { Ambiente, loadCertificate } from 'sri-ec';
+import { SriModule } from 'sri-ec-nestjs';
 
 SriModule.forRootAsync({
   imports: [ConfigModule],

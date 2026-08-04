@@ -40,7 +40,7 @@ import {
   loadCertificate,
   serializerFor,
   type Factura,
-} from '@amephia/sri-ec';
+} from 'sri-ec';
 
 function requireEnv(name: string): string {
   const value = process.env[name];

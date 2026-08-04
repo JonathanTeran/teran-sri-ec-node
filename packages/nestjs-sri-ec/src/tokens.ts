@@ -1,12 +1,12 @@
 /**
- * Tokens de inyección de `@amephia/nestjs-sri-ec`. Símbolos (no strings)
+ * Tokens de inyección de `sri-ec-nestjs`. Símbolos (no strings)
  * para evitar colisiones con tokens de otras librerías en el contenedor de
  * Nest — mismo patrón que `getConnectionToken()` en `@nestjs/typeorm` o los
  * tokens internos de `@nestjs/config`.
  */
 
 /**
- * Token del `SriClient` (ver `@amephia/sri-ec`) configurado por
+ * Token del `SriClient` (ver `sri-ec`) configurado por
  * {@link SriModule}. Úsese con `@Inject(SRI_CLIENT)` cuando se necesite el
  * cliente crudo en vez de la fachada {@link SriService}.
  */
