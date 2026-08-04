@@ -276,10 +276,11 @@ describe('serializerFor', () => {
     expect(xml).toContain('<factura id="comprobante" version="2.1.0">');
   });
 
-  it('lanza ValidationError con mensaje claro para un tipo aún no registrado (Task 8)', () => {
-    expect(() => serializerFor(TipoComprobante.NotaCredito)).toThrow(ValidationError);
-    expect(() => serializerFor(TipoComprobante.NotaCredito)).toThrow(/NotaCredito|04/);
-  });
+  // El resto de los 6 tipos (LiquidacionCompra, NotaCredito, NotaDebito,
+  // GuiaRemision, Retencion) se registran en Task 8 — ver
+  // `describe('serializerFor — los 6 tipos de comprobante')` en
+  // `test/xml-otros.test.ts`, que también cubre el caso de un `TipoComprobante`
+  // fuera del enum (`ValidationError`).
 });
 
 describe('xml-builder', () => {
