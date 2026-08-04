@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<factura id="comprobante" version="2.1.0"><infoTributaria><razonSocial>ACME &amp; Cía. &lt;S.A.&gt; "El Ñandú"</razonSocial><atributos raro="a&quot;b&amp;c&lt;d&gt;e" otro="x y" a="1"></atributos><vacio></vacio><autocerrado></autocerrado><cdata><![CDATA[texto <con> & raro]]></cdata><!-- comentario dentro del comprobante --><soloEspacios>   </soloEspacios><mixto>texto <b>negrita</b> y más   </mixto><preservado xml:space="preserve">  <hijo>x</hijo>  </preservado></infoTributaria><ds:Signature xmlns:ds="http://www.w3.org/2000/09/xmldsig#" xmlns:etsi="http://uri.etsi.org/01903/v1.3.2#" Id="Signature8b0cca"><ds:SignedInfo Id="Signature-SignedInfo8b0cca"><ds:CanonicalizationMethod Algorithm="http://www.w3.org/TR/2001/REC-xml-c14n-20010315"></ds:CanonicalizationMethod><ds:SignatureMethod Algorithm="http://www.w3.org/2000/09/xmldsig#rsa-sha1"></ds:SignatureMethod><ds:Reference Id="SignedPropertiesID8b0cca" Type="http://uri.etsi.org/01903#SignedProperties" URI="#Signature8b0cca-SignedProperties8b0cca"><ds:DigestMethod Algorithm="http://www.w3.org/2000/09/xmldsig#sha1"></ds:DigestMethod><ds:DigestValue>7bSVzpxBk8fJXxI4Tfkt9USfPPM=</ds:DigestValue></ds:Reference><ds:Reference Id="Reference-ID-8b0cca" URI="#comprobante"><ds:Transforms><ds:Transform Algorithm="http://www.w3.org/2000/09/xmldsig#enveloped-signature"></ds:Transform></ds:Transforms><ds:DigestMethod Algorithm="http://www.w3.org/2000/09/xmldsig#sha1"></ds:DigestMethod><ds:DigestValue>iqm7bmhJhtMVGIutebXuwhttsFo=</ds:DigestValue></ds:Reference></ds:SignedInfo><ds:SignatureValue Id="SignatureValue8b0cca">gFM5IIIhe9smhfyfwMz0cVzgks4l+jzxzlnZaWs68rkf5nKlHkWKiHX7YKbTK4GkXns0bCHPk4Au
+8H7zBlmAwKOkhY1lpOJX9xq0qPltJkm6Q2GLWerX3bS0UyEHwEcPnSoZ3CQjpO1Zcm8UTQghzo88
+Zl1Q8+WoPcIJHDcRicYE45VdIXPM3j2YcWvG0TRGh+s1G3cY9F0BbvVRHED32EsTTPvkmDjKHkid
+lmPG/ngVb12NleYwuxrj1Rl2AWU9insycwWOJ8Pyu2qDHbaipH0IVIoQqhdEdv0bjdJ7GLMAyosE
+2DzxcMQhqOvLdqiskOH72pGZAz0JYEiKKrZNYg==</ds:SignatureValue><ds:KeyInfo Id="Certificate8b0cca"><ds:X509Data><ds:X509Certificate>MIIDYjCCAkqgAwIBAgIUU+RnIJfD46uxGeqj+EAykSgws3wwDQYJKoZIhvcNAQELBQAwOjELMAkG
+A1UEBhMCRUMxFTATBgNVBAoMDEFtZXBoaWEgVGVzdDEUMBIGA1UEAwwLc3JpLWVjLXRlc3QwHhcN
+MjYwODA0MTIxMjE2WhcNMzYwODAxMTIxMjE2WjA6MQswCQYDVQQGEwJFQzEVMBMGA1UECgwMQW1l
+cGhpYSBUZXN0MRQwEgYDVQQDDAtzcmktZWMtdGVzdDCCASIwDQYJKoZIhvcNAQEBBQADggEPADCC
+AQoCggEBAL6uYTCYuFRcaMvmoV+768L3IMzxCmIOPW4DsCSlyzABxYWBPEqM2blVLXwFz2ds1cwu
+Tnedsh9tYfr5j+ory8aejKx9oETYvsCbPtJAeYDNOxy8yClZEGqNedqIMKOptox1FTbST+CRRZ9z
+DCynkTC0OB+Dk31/kmUkH006hmqyKDawfPTeLuhggsVdTVBH7QPRNOmcwpg0KjtOFdLyaKMtcXtm
+6RtBetfMLDm3Jdb1hcgU9Zqm+Lmm7kS4UfJfALUZfFQ81Rwqz+dpQgO0t+9+b7ZQAjqZ+TpfftnZ
+wl4EjC9uWRoRhIFSBla5WYhtrnG7muNJep3Gjv+YOj0yE7ECAwEAAaNgMF4wHQYDVR0OBBYEFG09
+cB2khfGEBKRBjuc4v6rGXZdKMB8GA1UdIwQYMBaAFG09cB2khfGEBKRBjuc4v6rGXZdKMA4GA1Ud
+DwEB/wQEAwIGwDAMBgNVHRMBAf8EAjAAMA0GCSqGSIb3DQEBCwUAA4IBAQCEVV4HZvCta0bp9VgP
+cQWYKB0606nFQsd/prCjkeF+c0TYCL0qef+4LgXDhGo+vrVaPPpva17IOQZB7sTS+37sI4REuO+h
+3W6b4xGf5Jqrvk4qDUaaZPLYZwsCjuV/f8dEgOhX6LgeOyYgjaOLh7i04t9XXbMAAHnoLHq3GczM
+kjhNDska5OI2Z41yIIhjZvjoUZnRHEJWVfC+jAMIk8siETyeZCTPR/2Lp72AGxObUyFyWIbZzqZ7
+LxCGGqgsj2OHiCL7YXSmq/uGTYwc1qdKITOePI/2cEOkq3Z8FM6G/Ju3olmHjkdOlwxUYOb2varH
+ea3hcpDkn/HSbOMGqBh4</ds:X509Certificate></ds:X509Data><ds:KeyValue><ds:RSAKeyValue><ds:Modulus>vq5hMJi4VFxoy+ahX7vrwvcgzPEKYg49bgOwJKXLMAHFhYE8SozZuVUtfAXPZ2zVzC5Od52yH21h
++vmP6ivLxp6MrH2gRNi+wJs+0kB5gM07HLzIKVkQao152ogwo6m2jHUVNtJP4JFFn3MMLKeRMLQ4
+H4OTfX+SZSQfTTqGarIoNrB89N4u6GCCxV1NUEftA9E06ZzCmDQqO04V0vJooy1xe2bpG0F618ws
+Obcl1vWFyBT1mqb4uabuRLhR8l8AtRl8VDzVHCrP52lCA7S3735vtlACOpn5Ol9+2dnCXgSML25Z
+GhGEgVIGVrlZiG2ucbua40l6ncaO/5g6PTITsQ==</ds:Modulus><ds:Exponent>AQAB</ds:Exponent></ds:RSAKeyValue></ds:KeyValue></ds:KeyInfo><ds:Object Id="Signature8b0cca-Object8b0cca"><etsi:QualifyingProperties Target="#Signature8b0cca"><etsi:SignedProperties Id="Signature8b0cca-SignedProperties8b0cca"><etsi:SignedSignatureProperties><etsi:SigningTime>2026-08-03T12:34:56-05:00</etsi:SigningTime><etsi:SigningCertificate><etsi:Cert><etsi:CertDigest><ds:DigestMethod xmlns:ds="http://www.w3.org/2000/09/xmldsig#" Algorithm="http://www.w3.org/2000/09/xmldsig#sha1"></ds:DigestMethod><ds:DigestValue xmlns:ds="http://www.w3.org/2000/09/xmldsig#">RIBayYV5TXZD2lgGytX2xSPnOmc=</ds:DigestValue></etsi:CertDigest><etsi:IssuerSerial><ds:X509IssuerName xmlns:ds="http://www.w3.org/2000/09/xmldsig#">CN=sri-ec-test,O=Amephia Test,C=EC</ds:X509IssuerName><ds:X509SerialNumber xmlns:ds="http://www.w3.org/2000/09/xmldsig#">478939787539860918323799103719791759516037591932</ds:X509SerialNumber></etsi:IssuerSerial></etsi:Cert></etsi:SigningCertificate></etsi:SignedSignatureProperties><etsi:SignedDataObjectProperties><etsi:DataObjectFormat ObjectReference="#Reference-ID-8b0cca"><etsi:Description>Comprobante electrónico SRI Ecuador</etsi:Description><etsi:MimeType>text/xml</etsi:MimeType></etsi:DataObjectFormat></etsi:SignedDataObjectProperties></etsi:SignedProperties></etsi:QualifyingProperties></ds:Object></ds:Signature></factura>
