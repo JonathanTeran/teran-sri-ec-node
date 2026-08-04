@@ -16,5 +16,6 @@ export * from './signing/index.js';
 export * from './transport/index.js';
 export * from './utils/clave-acceso.js';
 export * from './utils/money.js';
+export * from './utils/ruc-validator.js';
 export * from './xml/index.js';
 export * from './sri-client.js';
