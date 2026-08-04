@@ -9,6 +9,7 @@ import { notaCreditoSchema } from './nota-credito.schema.js';
 import { notaDebitoSchema } from './nota-debito.schema.js';
 import { retencionSchema } from './retencion.schema.js';
 
+export * from './business-validator.js';
 export * from './factura.schema.js';
 export * from './guia-remision.schema.js';
 export * from './liquidacion-compra.schema.js';
