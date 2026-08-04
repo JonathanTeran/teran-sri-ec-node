@@ -380,17 +380,28 @@ describe('NotaCreditoXmlSerializer — campos opcionales no representables en PH
     expect(iCodDocMod).toBeGreaterThan(iRise);
   });
 
-  it('NO emite detallesAdicionales aunque el documento lo traiga (omisión deliberada, sin evidencia de soporte XSD/1.x para notaCredito)', () => {
+  it('emite detalles[].detallesAdicionales entre precioTotalSinImpuesto e impuestos (adición por analogía, sin XSD de notaCredito en el repo — ver doc de cabecera del serializador)', () => {
     const doc: NotaCredito = {
       ...notaCreditoFixture,
       detalles: [
-        { ...notaCreditoFixture.detalles[0]!, detallesAdicionales: { Color: 'Rojo' } },
+        { ...notaCreditoFixture.detalles[0]!, detallesAdicionales: { Color: 'Rojo', Talla: 'M' } },
       ],
     };
     const xml = new NotaCreditoXmlSerializer().serialize(doc, claveNotaCredito);
 
+    expect(xml).toContain('<detAdicional nombre="Color" valor="Rojo"/>');
+    expect(xml).toContain('<detAdicional nombre="Talla" valor="M"/>');
+    const iPrecioTotal = xml.indexOf('<precioTotalSinImpuesto>');
+    const iDetAdic = xml.indexOf('<detallesAdicionales>');
+    const iImpuestos = xml.indexOf('<impuestos>');
+    expect(iDetAdic).toBeGreaterThan(iPrecioTotal);
+    expect(iImpuestos).toBeGreaterThan(iDetAdic);
+  });
+
+  it('no emite detallesAdicionales cuando está ausente', () => {
+    const xml = new NotaCreditoXmlSerializer().serialize(notaCreditoGolden, claveNotaCredito);
+
     expect(xml).not.toContain('detallesAdicionales');
-    expect(xml).not.toContain('detAdicional');
   });
 
   it('emite infoAdicional como último hijo de <notaCredito>, después de detalles', () => {

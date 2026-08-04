@@ -162,14 +162,16 @@ describe('FacturaXmlSerializer', () => {
 });
 
 /**
- * Factura con los 7 campos opcionales del XSD 2.1.0 que el value object v2
+ * Factura con los 9 campos opcionales del XSD 2.1.0 que el value object v2
  * de PHP no modela, pero que sí son legales (`minOccurs="0"`) y que el
  * generador 1.x (`FacturaGenerator.php`/`XmlGenerator.php`) escribe cuando
  * están presentes. `direccionComprador` e `infoAdicional` ya vienen con
- * valor en `facturaFixture`; los otros 5 se agregan aquí explícitamente.
- * `moneda`/`propina` se fuerzan a valores distintos del literal por
- * defecto (`'DOLAR'`/`'0.00'`) para verificar que el serializador los lee
- * del documento en vez de ignorarlos.
+ * valor en `facturaFixture`; los otros 7 se agregan aquí explícitamente
+ * (`detallesAdicionales`/`plazo`+`unidadTiempo` añadidos en la ronda de fix
+ * del reviewer — ver `task-8-report.md`, sección "Fix round 1"). `moneda`/
+ * `propina` se fuerzan a valores distintos del literal por defecto
+ * (`'DOLAR'`/`'0.00'`) para verificar que el serializador los lee del
+ * documento en vez de ignorarlos.
  */
 const facturaConOpcionales: Factura = {
   ...facturaFixture,
@@ -182,6 +184,13 @@ const facturaConOpcionales: Factura = {
   propina: '1.50',
   moneda: 'USD',
   totalConImpuestos: [{ ...facturaFixture.totalConImpuestos[0]!, descuentoAdicional: '5.00' }],
+  detalles: [
+    {
+      ...facturaFixture.detalles[0]!,
+      detallesAdicionales: { Color: 'Rojo', Talla: 'M' },
+    },
+  ],
+  pagos: [{ ...facturaFixture.pagos[0]!, plazo: '30' }],
   infoAdicional: { Email: 'cliente@example.com', Telefono: '0999999999' },
 };
 
@@ -265,6 +274,54 @@ describe('FacturaXmlSerializer — campos opcionales del XSD 2.1.0 (no modelados
 
     expect(iInfoAdicional).toBeGreaterThan(iCierreDetalles);
     expect(xml.endsWith('</infoAdicional></factura>')).toBe(true);
+  });
+
+  it('emite detalles[].detallesAdicionales entre precioTotalSinImpuesto e impuestos (fix round 1, hallazgo confirmado del reviewer)', () => {
+    expect(xml).toContain('<detAdicional nombre="Color" valor="Rojo"/>');
+    expect(xml).toContain('<detAdicional nombre="Talla" valor="M"/>');
+
+    const iPrecioTotal = xml.indexOf('<precioTotalSinImpuesto>');
+    const iDetAdic = xml.indexOf('<detallesAdicionales>');
+    const iImpuestos = xml.indexOf('<impuestos>');
+
+    expect(iDetAdic).toBeGreaterThan(iPrecioTotal);
+    expect(iImpuestos).toBeGreaterThan(iDetAdic);
+  });
+
+  it('no emite detallesAdicionales cuando está ausente', () => {
+    const xmlSinExtras = new FacturaXmlSerializer().serialize(facturaGolden, claveAcceso);
+
+    expect(xmlSinExtras).not.toContain('detallesAdicionales');
+  });
+
+  it('emite pagos[].plazo después de total, con unidadTiempo por defecto "dias" (fix round 1, hallazgo confirmado del reviewer)', () => {
+    expect(xml).toContain('<plazo>30</plazo>');
+    expect(xml).toContain('<unidadTiempo>dias</unidadTiempo>');
+
+    const iTotal = xml.indexOf('<total>');
+    const iPlazo = xml.indexOf('<plazo>');
+    const iUnidadTiempo = xml.indexOf('<unidadTiempo>');
+
+    expect(iPlazo).toBeGreaterThan(iTotal);
+    expect(iUnidadTiempo).toBeGreaterThan(iPlazo);
+  });
+
+  it('respeta unidadTiempo explícito cuando se provee (no fuerza el default "dias")', () => {
+    const conUnidadExplicita: Factura = {
+      ...facturaConOpcionales,
+      pagos: [{ ...facturaConOpcionales.pagos[0]!, unidadTiempo: 'meses' }],
+    };
+    const xmlConUnidad = new FacturaXmlSerializer().serialize(conUnidadExplicita, claveAcceso);
+
+    expect(xmlConUnidad).toContain('<unidadTiempo>meses</unidadTiempo>');
+    expect(xmlConUnidad).not.toContain('<unidadTiempo>dias</unidadTiempo>');
+  });
+
+  it('no emite plazo/unidadTiempo cuando plazo está ausente', () => {
+    const xmlSinExtras = new FacturaXmlSerializer().serialize(facturaGolden, claveAcceso);
+
+    expect(xmlSinExtras).not.toContain('<plazo>');
+    expect(xmlSinExtras).not.toContain('<unidadTiempo>');
   });
 });
 

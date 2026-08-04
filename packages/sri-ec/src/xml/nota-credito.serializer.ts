@@ -20,16 +20,20 @@ import { XmlBuilder, XmlElement, serializeXmlDocument } from './xml-builder.js';
  *     (`descuentoAdicional` `minOccurs="0"` entre `codigoPorcentaje` y
  *     `baseImponible`) — se asume la misma posición por convención de
  *     esquema SRI compartida entre comprobantes.
+ *   - `detalles[].detallesAdicionales`: no existe en `Documents\Detalle`
+ *     (PHP) ni en `NotaCreditoGenerator::createDetalles()` (1.x) — no hay
+ *     XSD de notaCredito en el repo para confirmarlo directamente (a
+ *     diferencia de `factura_v2.1.0.xsd`/`liquidacionCompra_v1.1.0.xsd`,
+ *     que sí lo tienen). **Adición por analogía** (ficha técnica SRI: el
+ *     detalle de notaCredito admite `detallesAdicionales` igual que
+ *     factura/liquidacionCompra/guiaRemision — mismo complexType `detalle`
+ *     reutilizado entre comprobantes): se emite entre
+ *     `precioTotalSinImpuesto` e `impuestos`, mismo mecanismo
+ *     `detAdicional[nombre][valor]` que `FacturaXmlSerializer`/
+ *     `LiquidacionCompraXmlSerializer`.
  *   - `infoAdicional` (top-level, último hijo de `<notaCredito>`): no existe
  *     en `Documents\NotaCredito`, pero sí en `NotaCreditoGenerator::generate()`
  *     (paso 4, 1.x) — ver `writeInfoAdicional()` en `common.ts`.
- *
- * `detalles[].detallesAdicionales` (campo del tipo compartido `Detalle`) NO
- * se emite aquí a propósito: a diferencia de `LiquidacionCompraGenerator`
- * (que sí lo soporta y cuyo XSD lo confirma), `NotaCreditoGenerator::createDetalles()`
- * (1.x) no lo contempla en absoluto — no hay evidencia de que el XSD 1.1.0
- * de notaCredito lo admita, así que se omite en vez de asumir una posición
- * sin respaldo.
  *
  * `codigoPrincipal`/`codigoAuxiliar` de `Detalle` se renombran en el XML a
  * `codigoInterno`/`codigoAdicional` (mismo remapeo que
@@ -113,6 +117,21 @@ export class NotaCreditoXmlSerializer {
       b.child(d, 'precioUnitario', formatMonto(det.precioUnitario, SCALE_QUANTITY));
       b.child(d, 'descuento', formatMonto(det.descuento, SCALE_MONEY));
       b.child(d, 'precioTotalSinImpuesto', formatMonto(det.precioTotalSinImpuesto, SCALE_MONEY));
+
+      // Adición por analogía (sin XSD de notaCredito en el repo para
+      // confirmar la posición directamente): mismo mecanismo y misma
+      // posición relativa (entre precioTotalSinImpuesto e impuestos) que
+      // `FacturaXmlSerializer`/`LiquidacionCompraXmlSerializer`, donde SÍ
+      // está confirmado contra XSD — ver doc de cabecera de esta clase.
+      const daEntries = det.detallesAdicionales ? Object.entries(det.detallesAdicionales) : [];
+      if (daEntries.length > 0) {
+        const da = b.child(d, 'detallesAdicionales');
+        for (const [nombre, valor] of daEntries) {
+          const item = b.child(da, 'detAdicional');
+          item.setAttribute('nombre', nombre);
+          item.setAttribute('valor', valor);
+        }
+      }
 
       const imps = b.child(d, 'impuestos');
       for (const imp of det.impuestos) {
