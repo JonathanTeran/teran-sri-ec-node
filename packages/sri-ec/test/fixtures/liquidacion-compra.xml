@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<liquidacionCompra id="comprobante" version="1.1.0">
+  <infoTributaria>
+    <ambiente>1</ambiente>
+    <tipoEmision>1</tipoEmision>
+    <razonSocial>COMERCIAL AMEPHIA S.A.</razonSocial>
+    <ruc>1790011001001</ruc>
+    <claveAcceso>0308202603179001100100110010010000000021234567815</claveAcceso>
+    <codDoc>03</codDoc>
+    <estab>001</estab>
+    <ptoEmi>001</ptoEmi>
+    <secuencial>000000002</secuencial>
+    <dirMatriz>Av. Amazonas N24-03 y Colón, Quito</dirMatriz>
+  </infoTributaria>
+  <infoLiquidacionCompra>
+    <fechaEmision>03/08/2026</fechaEmision>
+    <dirEstablecimiento>Av. Amazonas N24-03, Quito</dirEstablecimiento>
+    <contribuyenteEspecial>5368</contribuyenteEspecial>
+    <obligadoContabilidad>SI</obligadoContabilidad>
+    <tipoIdentificacionProveedor>05</tipoIdentificacionProveedor>
+    <razonSocialProveedor>María Gómez</razonSocialProveedor>
+    <identificacionProveedor>1710034065</identificacionProveedor>
+    <direccionProveedor>Calle Sucre 456, Quito</direccionProveedor>
+    <totalSinImpuestos>50.00</totalSinImpuestos>
+    <totalDescuento>0.00</totalDescuento>
+    <totalConImpuestos>
+      <totalImpuesto>
+        <codigo>2</codigo>
+        <codigoPorcentaje>4</codigoPorcentaje>
+        <baseImponible>50.00</baseImponible>
+        <valor>6.00</valor>
+      </totalImpuesto>
+    </totalConImpuestos>
+    <importeTotal>56.00</importeTotal>
+    <moneda>DOLAR</moneda>
+    <pagos>
+      <pago>
+        <formaPago>01</formaPago>
+        <total>56.00</total>
+      </pago>
+    </pagos>
+  </infoLiquidacionCompra>
+  <detalles>
+    <detalle>
+      <codigoPrincipal>PROD002</codigoPrincipal>
+      <descripcion>Compra de maíz duro</descripcion>
+      <cantidad>10.000000</cantidad>
+      <precioUnitario>5.000000</precioUnitario>
+      <descuento>0.00</descuento>
+      <precioTotalSinImpuesto>50.00</precioTotalSinImpuesto>
+      <impuestos>
+        <impuesto>
+          <codigo>2</codigo>
+          <codigoPorcentaje>4</codigoPorcentaje>
+          <tarifa>12.00</tarifa>
+          <baseImponible>50.00</baseImponible>
+          <valor>6.00</valor>
+        </impuesto>
+      </impuestos>
+    </detalle>
+  </detalles>
+</liquidacionCompra>

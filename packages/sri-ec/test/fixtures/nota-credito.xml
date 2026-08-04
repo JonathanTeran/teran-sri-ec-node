@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<notaCredito id="comprobante" version="1.1.0">
+  <infoTributaria>
+    <ambiente>1</ambiente>
+    <tipoEmision>1</tipoEmision>
+    <razonSocial>COMERCIAL AMEPHIA S.A.</razonSocial>
+    <ruc>1790011001001</ruc>
+    <claveAcceso>0308202604179001100100110010010000000031234567817</claveAcceso>
+    <codDoc>04</codDoc>
+    <estab>001</estab>
+    <ptoEmi>001</ptoEmi>
+    <secuencial>000000003</secuencial>
+    <dirMatriz>Av. Amazonas N24-03 y Colón, Quito</dirMatriz>
+  </infoTributaria>
+  <infoNotaCredito>
+    <fechaEmision>03/08/2026</fechaEmision>
+    <dirEstablecimiento>Av. Amazonas N24-03, Quito</dirEstablecimiento>
+    <tipoIdentificacionComprador>05</tipoIdentificacionComprador>
+    <razonSocialComprador>Juan Pérez</razonSocialComprador>
+    <identificacionComprador>1710034065</identificacionComprador>
+    <contribuyenteEspecial>5368</contribuyenteEspecial>
+    <obligadoContabilidad>SI</obligadoContabilidad>
+    <codDocModificado>01</codDocModificado>
+    <numDocModificado>001-001-000000001</numDocModificado>
+    <fechaEmisionDocSustento>01/08/2026</fechaEmisionDocSustento>
+    <totalSinImpuestos>100.00</totalSinImpuestos>
+    <valorModificacion>112.00</valorModificacion>
+    <moneda>DOLAR</moneda>
+    <totalConImpuestos>
+      <totalImpuesto>
+        <codigo>2</codigo>
+        <codigoPorcentaje>4</codigoPorcentaje>
+        <baseImponible>100.00</baseImponible>
+        <valor>12.00</valor>
+      </totalImpuesto>
+    </totalConImpuestos>
+    <motivo>Devolución de mercadería</motivo>
+  </infoNotaCredito>
+  <detalles>
+    <detalle>
+      <codigoInterno>PROD001</codigoInterno>
+      <descripcion>Devolución: servicio de consultoría</descripcion>
+      <cantidad>1.000000</cantidad>
+      <precioUnitario>100.000000</precioUnitario>
+      <descuento>0.00</descuento>
+      <precioTotalSinImpuesto>100.00</precioTotalSinImpuesto>
+      <impuestos>
+        <impuesto>
+          <codigo>2</codigo>
+          <codigoPorcentaje>4</codigoPorcentaje>
+          <baseImponible>100.00</baseImponible>
+          <valor>12.00</valor>
+        </impuesto>
+      </impuestos>
+    </detalle>
+  </detalles>
+</notaCredito>

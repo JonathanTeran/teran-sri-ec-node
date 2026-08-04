@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<factura id="comprobante" version="2.1.0">
+  <infoTributaria>
+    <razonSocial>ACME &amp; Cía. &lt;S.A.&gt; "El Ñandú"</razonSocial>
+    <atributos raro="a&quot;b&amp;c&lt;d>e" otro="x	y" a="1"></atributos>
+    <vacio></vacio>
+    <autocerrado/>
+    <cdata><![CDATA[texto <con> & raro]]></cdata>
+    <!-- comentario dentro del comprobante -->
+    <soloEspacios>   </soloEspacios>
+    <mixto>texto <b>negrita</b> y más   </mixto>
+    <preservado xml:space="preserve">  <hijo>x</hijo>  </preservado>
+  </infoTributaria>
+</factura>

@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<guiaRemision id="comprobante" version="1.1.0">
+  <infoTributaria>
+    <ambiente>1</ambiente>
+    <tipoEmision>1</tipoEmision>
+    <razonSocial>COMERCIAL AMEPHIA S.A.</razonSocial>
+    <ruc>1790011001001</ruc>
+    <claveAcceso>0308202606179001100100110010010000000051234567810</claveAcceso>
+    <codDoc>06</codDoc>
+    <estab>001</estab>
+    <ptoEmi>001</ptoEmi>
+    <secuencial>000000005</secuencial>
+    <dirMatriz>Av. Amazonas N24-03 y Colón, Quito</dirMatriz>
+  </infoTributaria>
+  <infoGuiaRemision>
+    <dirEstablecimiento>Av. Amazonas N24-03, Quito</dirEstablecimiento>
+    <dirPartida>Bodega Central, Av. Eloy Alfaro N32-100, Quito</dirPartida>
+    <razonSocialTransportista>Transportes Rápidos S.A.</razonSocialTransportista>
+    <tipoIdentificacionTransportista>04</tipoIdentificacionTransportista>
+    <rucTransportista>1790011001001</rucTransportista>
+    <obligadoContabilidad>SI</obligadoContabilidad>
+    <contribuyenteEspecial>5368</contribuyenteEspecial>
+    <fechaIniTransporte>03/08/2026</fechaIniTransporte>
+    <fechaFinTransporte>04/08/2026</fechaFinTransporte>
+    <placa>PBX1234</placa>
+  </infoGuiaRemision>
+  <destinatarios>
+    <destinatario>
+      <identificacionDestinatario>1710034065</identificacionDestinatario>
+      <razonSocialDestinatario>Juan Pérez</razonSocialDestinatario>
+      <dirDestinatario>Calle Falsa 123, Quito</dirDestinatario>
+      <motivoTraslado>Venta</motivoTraslado>
+      <codDocSustento>01</codDocSustento>
+      <numDocSustento>001-001-000000001</numDocSustento>
+      <numAutDocSustento>1234567890123</numAutDocSustento>
+      <fechaEmisionDocSustento>03/08/2026</fechaEmisionDocSustento>
+      <detalles>
+        <detalle>
+          <codigoInterno>PROD001</codigoInterno>
+          <descripcion>Caja de repuestos</descripcion>
+          <cantidad>5.00</cantidad>
+        </detalle>
+      </detalles>
+    </destinatario>
+  </destinatarios>
+</guiaRemision>

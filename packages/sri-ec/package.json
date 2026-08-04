@@ -1,0 +1,74 @@
+{
+  "name": "@amephia/sri-ec",
+  "version": "0.1.0",
+  "description": "Cliente Node.js/TypeScript para facturación electrónica del SRI Ecuador (port de teran-sri-ec).",
+  "keywords": [
+    "sri",
+    "ecuador",
+    "facturacion-electronica",
+    "xades",
+    "comprobantes-electronicos",
+    "factura",
+    "e-invoicing",
+    "sri-ecuador",
+    "firma-electronica",
+    "p12"
+  ],
+  "homepage": "https://github.com/JonathanTeran/teran-sri-ec-node#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/JonathanTeran/teran-sri-ec-node.git",
+    "directory": "packages/sri-ec"
+  },
+  "bugs": {
+    "url": "https://github.com/JonathanTeran/teran-sri-ec-node/issues"
+  },
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    }
+  },
+  "files": [
+    "dist",
+    "src",
+    "LICENSE.md",
+    "README.md"
+  ],
+  "sideEffects": false,
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT",
+  "author": "Jonathan Terán",
+  "scripts": {
+    "build": "tsup",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit -p tsconfig.test.json"
+  },
+  "dependencies": {
+    "node-forge": "^1.4.0",
+    "@xmldom/xmldom": "^0.9.10",
+    "fast-xml-parser": "^5.10.1",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "tsup": "^8.5.1",
+    "vitest": "^3.2.7",
+    "@types/node-forge": "^1.3.14"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

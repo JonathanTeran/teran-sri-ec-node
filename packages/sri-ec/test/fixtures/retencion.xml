@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<comprobanteRetencion id="comprobante" version="2.0.0">
+  <infoTributaria>
+    <ambiente>1</ambiente>
+    <tipoEmision>1</tipoEmision>
+    <razonSocial>AGENTE RETENCION S.A.</razonSocial>
+    <ruc>1790011001001</ruc>
+    <claveAcceso>0308202607179001100100110010010000000061234567812</claveAcceso>
+    <codDoc>07</codDoc>
+    <estab>001</estab>
+    <ptoEmi>001</ptoEmi>
+    <secuencial>000000006</secuencial>
+    <dirMatriz>Av. Amazonas N24-03 y Colón, Quito</dirMatriz>
+  </infoTributaria>
+  <infoCompRetencion>
+    <fechaEmision>03/08/2026</fechaEmision>
+    <dirEstablecimiento>Av. Amazonas N24-03, Quito</dirEstablecimiento>
+    <contribuyenteEspecial>5368</contribuyenteEspecial>
+    <obligadoContabilidad>SI</obligadoContabilidad>
+    <tipoIdentificacionSujetoRetenido>04</tipoIdentificacionSujetoRetenido>
+    <tipoSujetoRetenido>01</tipoSujetoRetenido>
+    <razonSocialSujetoRetenido>Proveedor EC S.A.</razonSocialSujetoRetenido>
+    <identificacionSujetoRetenido>1790011002001</identificacionSujetoRetenido>
+    <periodoFiscal>08/2026</periodoFiscal>
+  </infoCompRetencion>
+  <docsSustento>
+    <docSustento>
+      <codSustento>01</codSustento>
+      <codDocSustento>01</codDocSustento>
+      <numDocSustento>001-001-000000100</numDocSustento>
+      <fechaEmisionDocSustento>01/08/2026</fechaEmisionDocSustento>
+      <totalSinImpuestos>1000.00</totalSinImpuestos>
+      <importeTotal>1120.00</importeTotal>
+      <impuestosDocSustento>
+        <impuestoDocSustento>
+          <codImpuestoDocSustento>2</codImpuestoDocSustento>
+          <codigoPorcentaje>4</codigoPorcentaje>
+          <baseImponible>1000.00</baseImponible>
+          <tarifa>12.00</tarifa>
+          <factorProporcionalidad>1.00</factorProporcionalidad>
+          <baseImponibleModificada>1000.00</baseImponibleModificada>
+          <valorImpuesto>120.00</valorImpuesto>
+        </impuestoDocSustento>
+      </impuestosDocSustento>
+      <retenciones>
+        <retencion>
+          <codigo>2</codigo>
+          <codigoRetencion>303</codigoRetencion>
+          <baseImponible>1000.00</baseImponible>
+          <porcentajeRetener>10</porcentajeRetener>
+          <valorRetenido>100.00</valorRetenido>
+        </retencion>
+      </retenciones>
+      <pagos>
+        <pago>
+          <formaPago>01</formaPago>
+          <total>1020.00</total>
+        </pago>
+      </pagos>
+    </docSustento>
+  </docsSustento>
+</comprobanteRetencion>

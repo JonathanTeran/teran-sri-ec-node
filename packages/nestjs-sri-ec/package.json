@@ -1,0 +1,79 @@
+{
+  "name": "@amephia/nestjs-sri-ec",
+  "version": "0.1.0",
+  "description": "Módulo NestJS de integración con @amephia/sri-ec para facturación electrónica del SRI Ecuador.",
+  "keywords": [
+    "nestjs",
+    "nest",
+    "sri",
+    "ecuador",
+    "facturacion-electronica",
+    "xades",
+    "comprobantes-electronicos",
+    "factura",
+    "e-invoicing",
+    "sri-ecuador",
+    "firma-electronica",
+    "p12"
+  ],
+  "homepage": "https://github.com/JonathanTeran/teran-sri-ec-node#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/JonathanTeran/teran-sri-ec-node.git",
+    "directory": "packages/nestjs-sri-ec"
+  },
+  "bugs": {
+    "url": "https://github.com/JonathanTeran/teran-sri-ec-node/issues"
+  },
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    }
+  },
+  "files": [
+    "dist",
+    "src",
+    "LICENSE.md",
+    "README.md"
+  ],
+  "sideEffects": false,
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT",
+  "author": "Jonathan Terán",
+  "scripts": {
+    "build": "tsup",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit -p tsconfig.test.json"
+  },
+  "peerDependencies": {
+    "@amephia/sri-ec": "^0.1.0",
+    "@nestjs/common": "^10 || ^11"
+  },
+  "devDependencies": {
+    "@amephia/sri-ec": "*",
+    "typescript": "^5.9.3",
+    "tsup": "^8.5.1",
+    "vitest": "^3.2.7",
+    "@nestjs/common": "^11.1.28",
+    "@nestjs/testing": "^11.1.28",
+    "@swc/core": "^1.15.47",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.2"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
