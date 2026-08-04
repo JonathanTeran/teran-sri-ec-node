@@ -25,7 +25,7 @@ import { Ambiente, type Certificate, type SriTransport } from '@amephia/sri-ec';
 
 import { SriModule } from '../src/sri.module.js';
 import { SriService } from '../src/sri.service.js';
-import { SRI_CLIENT } from '../src/tokens.js';
+import { SRI_CLIENT, SRI_MODULE_OPTIONS } from '../src/tokens.js';
 
 const FIXTURES_DIR = fileURLToPath(new URL('../../sri-ec/test/fixtures/', import.meta.url));
 const PASSWORD = 'test1234';
@@ -126,6 +126,76 @@ describe('SriModule.forRoot', () => {
 
     expect(transport.enviar).toHaveBeenCalledWith('<signed/>', Ambiente.Pruebas);
     expect(batch.status().AUTHORIZED).toBe(1);
+  });
+});
+
+describe('SRI_MODULE_OPTIONS no expone material sensible', () => {
+  /** Serializa el valor registrado para inspeccionarlo como lo haría un volcado/logger del contenedor. */
+  function dump(value: unknown): string {
+    return JSON.stringify(value, (_k, v: unknown) =>
+      v instanceof Uint8Array ? `Uint8Array(${v.length})` : v,
+    );
+  }
+
+  it('forRoot con { p12, password }: el valor registrado no contiene ni el p12 ni la contraseña', async () => {
+    const p12 = fixtureBytes('test-cert.p12');
+
+    const moduleRef = await Test.createTestingModule({
+      imports: [
+        SriModule.forRoot({ ambiente: Ambiente.Pruebas, certificate: { p12, password: PASSWORD } }),
+      ],
+    }).compile();
+
+    const options = moduleRef.get<Record<string, unknown>>(SRI_MODULE_OPTIONS);
+
+    expect(options).toEqual({ ambiente: Ambiente.Pruebas });
+    expect(Object.keys(options)).not.toContain('p12');
+    expect(Object.keys(options)).not.toContain('password');
+    expect(Object.keys(options)).not.toContain('certificate');
+    expect(dump(options)).not.toContain(PASSWORD);
+  });
+
+  it('forRoot con un Certificate ya cargado: tampoco se registra el certificado', async () => {
+    const certificate: Certificate = sriEc.loadCertificate(fixtureBytes('test-cert.p12'), PASSWORD);
+    const transport = stubTransport();
+
+    const moduleRef = await Test.createTestingModule({
+      imports: [
+        SriModule.forRoot({
+          ambiente: Ambiente.Produccion,
+          certificate,
+          transport,
+          validate: false,
+        }),
+      ],
+    }).compile();
+
+    const options = moduleRef.get<Record<string, unknown>>(SRI_MODULE_OPTIONS);
+
+    // Solo la configuración que SriService necesita aguas abajo.
+    expect(options).toEqual({ ambiente: Ambiente.Produccion, transport, validate: false });
+    expect(dump(options)).not.toContain('PRIVATE KEY');
+    expect(dump(options)).not.toContain(certificate.certPem);
+  });
+
+  it('forRootAsync: la useFactory se invoca una sola vez y su resultado crudo no queda registrado', async () => {
+    const p12 = fixtureBytes('test-cert.p12');
+    const useFactory = vi.fn(() => ({
+      ambiente: Ambiente.Pruebas,
+      certificate: { p12, password: PASSWORD },
+    }));
+
+    const moduleRef = await Test.createTestingModule({
+      imports: [SriModule.forRootAsync({ useFactory })],
+    }).compile();
+
+    const options = moduleRef.get<Record<string, unknown>>(SRI_MODULE_OPTIONS);
+    const client = moduleRef.get(SRI_CLIENT);
+
+    expect(client).toBeInstanceOf(sriEc.SriClient);
+    expect(useFactory).toHaveBeenCalledTimes(1);
+    expect(options).toEqual({ ambiente: Ambiente.Pruebas });
+    expect(dump(options)).not.toContain(PASSWORD);
   });
 });
 

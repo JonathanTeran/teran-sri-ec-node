@@ -1,7 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { BatchEmitter, type BatchEmitterOptions, type Comprobante, SriClient } from '@amephia/sri-ec';
 
-import type { SriModuleOptions } from './interfaces.js';
+import type { SriRuntimeOptions } from './interfaces.js';
 import { SRI_CLIENT, SRI_MODULE_OPTIONS } from './tokens.js';
 
 /**
@@ -16,7 +16,7 @@ import { SRI_CLIENT, SRI_MODULE_OPTIONS } from './tokens.js';
 export class SriService {
   constructor(
     @Inject(SRI_CLIENT) readonly client: SriClient,
-    @Inject(SRI_MODULE_OPTIONS) private readonly moduleOptions: SriModuleOptions,
+    @Inject(SRI_MODULE_OPTIONS) private readonly moduleOptions: SriRuntimeOptions,
   ) {}
 
   /** Delega en `SriClient.emit()`. */
@@ -32,6 +32,11 @@ export class SriService {
   /** Delega en `SriClient.sign()`. */
   sign(xml: string): string {
     return this.client.sign(xml);
+  }
+
+  /** Delega en `SriClient.prepare()`: comprobante firmado + clave de acceso, sin tocar la red. */
+  prepare(doc: Comprobante, claveAcceso?: string): ReturnType<SriClient['prepare']> {
+    return this.client.prepare(doc, claveAcceso);
   }
 
   /**

@@ -13,11 +13,14 @@
 export const SRI_CLIENT: unique symbol = Symbol('SRI_CLIENT');
 
 /**
- * Token interno de las `SriModuleOptions` ya resueltas (sea la llamada
- * síncrona a `forRoot()` o el resultado de `useFactory` en
- * `forRootAsync()`). No es parte de la superficie pública documentada del
- * módulo, pero se exporta por si un consumidor avanzado necesita inyectar
- * la configuración cruda (p.ej. para leer `ambiente` fuera de
- * {@link SriService}).
+ * Token de la configuración **no sensible** del módulo (`SriRuntimeOptions`:
+ * `ambiente`, `transport`, `validate`), sea de la llamada síncrona a
+ * `forRoot()` o del `useFactory` de `forRootAsync()`. Se exporta por si un
+ * consumidor avanzado necesita leer `ambiente` fuera de {@link SriService}.
+ *
+ * **Nunca contiene el certificado ni el par `{ p12, password }`**: el módulo
+ * los consume al construir el `SriClient`, antes de registrar nada en el
+ * contenedor, para que una traza de error o un volcado del contenedor no
+ * puedan exponer la contraseña del `.p12`.
  */
 export const SRI_MODULE_OPTIONS: unique symbol = Symbol('SRI_MODULE_OPTIONS');
