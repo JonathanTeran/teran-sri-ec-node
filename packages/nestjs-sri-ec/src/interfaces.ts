@@ -27,9 +27,22 @@ export interface SriModuleOptions extends SriRuntimeOptions {
   /**
    * Un `Certificate` ya cargado (p.ej. si el consumidor ya llamó
    * `loadCertificate()` por su cuenta, o lo obtiene de un secret manager en
-   * ese formato), o el par `.p12`/contraseña crudo — en ese caso el
-   * provider de `SRI_CLIENT` llama `loadCertificate()` internamente antes
-   * de construir el `SriClient`.
+   * ese formato), o el par `.p12`/contraseña crudo — en ese caso el módulo
+   * llama `loadCertificate()` internamente antes de construir el `SriClient`.
+   *
+   * **Cuándo ocurre esa carga** difiere según el punto de entrada, porque el
+   * certificado se resuelve siempre fuera del contenedor de DI (ver
+   * `SriModule`):
+   * - {@link SriModule.forRoot}: **al evaluar la definición del módulo**, es
+   *   decir en la propia llamada a `forRoot()`, antes de que Nest compile
+   *   nada. Un `.p12` o una contraseña inválidos fallan de inmediato, en el
+   *   import del módulo, con `CertificateError` — no en la primera inyección.
+   * - {@link SriModule.forRootAsync}: al resolver el provider interno que
+   *   ejecuta la `useFactory`, ya durante la compilación del módulo (la
+   *   `useFactory` se invoca exactamente una vez).
+   *
+   * En ninguno de los dos casos el `.p12` ni la contraseña quedan
+   * registrados bajo un token del contenedor.
    */
   certificate: { p12: Uint8Array; password: string } | Certificate;
   /** Registra el módulo como global (`@Global()`). `false` por defecto. */

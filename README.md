@@ -367,6 +367,8 @@ Para configuración asíncrona (leer el certificado de un `ConfigService`, un se
 
 El certificado se resuelve **antes** de que nada entre al contenedor de DI: bajo el token `SRI_MODULE_OPTIONS` solo queda la configuración no sensible (`ambiente`, `transport`, `validate`). Ni el `.p12` ni su contraseña se registran, para que un volcado del contenedor o una traza de error de Nest no puedan exponerlos.
 
+Como consecuencia, `SriModule.forRoot()` carga el certificado **al evaluar la definición del módulo** (en la propia llamada a `forRoot()`, antes de que Nest compile nada): un `.p12` corrupto o una contraseña incorrecta fallan de inmediato, en el import del módulo, con `CertificateError`, en vez de en la primera inyección de `SriService`/`SRI_CLIENT`. Con `forRootAsync()` la carga ocurre al ejecutarse la `useFactory`, durante la compilación del módulo.
+
 ## 📂 Estructura del Proyecto
 
 ```
