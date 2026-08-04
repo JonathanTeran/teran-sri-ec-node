@@ -262,6 +262,8 @@ export const retencionFixture: Retencion = {
           codigoPorcentaje: '4',
           baseImponible: '1000.00',
           tarifa: '12.00',
+          factorProporcionalidad: '1.00',
+          baseImponibleModificada: '1000.00',
           valorImpuesto: '120.00',
         },
       ],
