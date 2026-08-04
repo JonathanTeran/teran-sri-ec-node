@@ -1,13 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { Ambiente } from '../src/catalogs/index.js';
+import { Ambiente, TipoComprobante } from '../src/catalogs/index.js';
 import type { Comprobante } from '../src/documents/index.js';
 import { CommunicationError, ValidationError } from '../src/errors/index.js';
 import type { Certificate } from '../src/signing/certificate.js';
 import { XadesSigner } from '../src/signing/xades-signer.js';
 import { SriClient, type SriClientOptions } from '../src/sri-client.js';
 import type { AuthorizationOutcome, ReceptionOutcome, SriTransport } from '../src/transport/types.js';
-import { calcularDigitoVerificador } from '../src/utils/clave-acceso.js';
+import { calcularDigitoVerificador, generarClaveAcceso } from '../src/utils/clave-acceso.js';
 import { facturaFixture, guiaRemisionFixture } from './documents.test.js';
 
 /**
@@ -54,7 +54,33 @@ function buildClient(
   });
 }
 
-const CLAVE = '2601202601179001100112345678901234567890123456';
+/**
+ * Clave de acceso coherente con un comprobante concreto: desde que
+ * `SriClient` verifica las claves provistas por el caller (formato + dígito
+ * verificador + campos embebidos), los tests no pueden inventar un string
+ * cualquiera — se deriva del propio fixture, igual que haría un caller real
+ * que persiste la clave antes de emitir.
+ */
+function claveDe(
+  doc: Comprobante,
+  fecha: string,
+  codigoNum = '12345678',
+  ambiente: Ambiente = Ambiente.Pruebas,
+): string {
+  const info = doc.infoTributaria;
+  return generarClaveAcceso({
+    fecha,
+    tipoComprobante: doc.tipo,
+    ruc: info.ruc,
+    ambiente,
+    serie: `${info.estab}${info.ptoEmi}`,
+    numero: info.secuencial,
+    codigoNum,
+    tipoEmision: info.tipoEmision,
+  });
+}
+
+const CLAVE = claveDe(facturaFixture, '03/08/2026');
 
 describe('SriClient.emit', () => {
   it('flujo completo autorizado: RECIBIDA + AUTORIZADO produce un EmissionResult con numeroAutorizacion y authorizedXml', async () => {
@@ -199,10 +225,57 @@ describe('SriClient.emit', () => {
       infoTributaria: { ...facturaFixture.infoTributaria, ruc: '1790011001000' },
     };
 
-    const result = await client.emit(docConRucInvalido, CLAVE);
+    const result = await client.emit(docConRucInvalido);
 
     expect(result.status).toBe('EN_PROCESO');
     expect(sign).toHaveBeenCalledTimes(1);
+  });
+
+  it('validate: false NO desactiva la verificación de ambiente: sigue lanzando ValidationError sin firmar', async () => {
+    const { signer, sign } = stubSigner();
+    const transport = mockTransport();
+    const client = buildClient({
+      transport,
+      signer,
+      validate: false,
+      ambiente: Ambiente.Produccion,
+    });
+
+    // facturaFixture declara infoTributaria.ambiente = Pruebas.
+    await expect(client.emit(facturaFixture)).rejects.toBeInstanceOf(ValidationError);
+    expect(sign).not.toHaveBeenCalled();
+    expect(transport.enviar).not.toHaveBeenCalled();
+  });
+
+  it('EN_PROCESO conserva los mensajes devueltos por autorizar()', async () => {
+    const { signer } = stubSigner();
+    const transport = mockTransport({
+      autorizar: async () => ({
+        estado: 'EN PROCESO',
+        mensajes: [
+          {
+            identificador: '70',
+            mensaje: 'COMPROBANTE EN PROCESAMIENTO',
+            tipo: 'INFORMATIVO',
+            informacionAdicional: 'Consulte más tarde',
+          },
+        ],
+      }),
+    });
+    const client = buildClient({ transport, signer });
+
+    const result = await client.emit(facturaFixture, CLAVE);
+
+    expect(result.status).toBe('EN_PROCESO');
+    expect(result.rejectedStage).toBeUndefined();
+    expect(result.messages).toEqual([
+      {
+        identificador: '70',
+        mensaje: 'COMPROBANTE EN PROCESAMIENTO',
+        tipo: 'INFORMATIVO',
+        informacionAdicional: 'Consulte más tarde',
+      },
+    ]);
   });
 
   it('ambiente de infoTributaria distinto del ambiente del cliente → ValidationError, sin firmar', async () => {
@@ -215,7 +288,7 @@ describe('SriClient.emit', () => {
     expect(transport.enviar).not.toHaveBeenCalled();
   });
 
-  it('CommunicationError de transport.enviar se propaga tal cual, no se convierte en un EmissionResult', async () => {
+  it('CommunicationError de transport.enviar se propaga (no es un EmissionResult) con claveAcceso y signedXml adjuntos', async () => {
     const { signer } = stubSigner();
     const fallo = new CommunicationError('timeout hablando con el SRI');
     const transport = mockTransport({
@@ -225,13 +298,21 @@ describe('SriClient.emit', () => {
     });
     const client = buildClient({ transport, signer });
 
-    await expect(client.emit(facturaFixture, CLAVE)).rejects.toBe(fallo);
+    const err = await client.emit(facturaFixture, CLAVE).catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(CommunicationError);
+    const commErr = err as CommunicationError;
+    expect(commErr.message).toBe('timeout hablando con el SRI');
+    expect(commErr.claveAcceso).toBe(CLAVE);
+    expect(commErr.signedXml).toContain('<signed>');
+    expect(commErr.cause).toBe(fallo);
     expect(transport.autorizar).not.toHaveBeenCalled();
   });
 
-  it('CommunicationError de transport.autorizar también se propaga', async () => {
+  it('CommunicationError de transport.autorizar también se propaga con el contexto del comprobante', async () => {
     const { signer } = stubSigner();
-    const fallo = new CommunicationError('timeout en autorización');
+    const causaOriginal = new TypeError('fetch failed');
+    const fallo = new CommunicationError('timeout en autorización', causaOriginal);
     const transport = mockTransport({
       autorizar: async () => {
         throw fallo;
@@ -239,7 +320,152 @@ describe('SriClient.emit', () => {
     });
     const client = buildClient({ transport, signer });
 
+    const err = await client.emit(facturaFixture, CLAVE).catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(CommunicationError);
+    const commErr = err as CommunicationError;
+    expect(commErr.claveAcceso).toBe(CLAVE);
+    expect(commErr.signedXml).toContain('<signed>');
+    // El `cause` original del transporte se preserva (no se pisa con el CommunicationError intermedio).
+    expect(commErr.cause).toBe(causaOriginal);
+  });
+
+  it('un error que NO es CommunicationError se propaga intacto (sin envolver)', async () => {
+    const { signer } = stubSigner();
+    const fallo = new RangeError('bug en un transporte propio');
+    const transport = mockTransport({
+      enviar: async () => {
+        throw fallo;
+      },
+    });
+    const client = buildClient({ transport, signer });
+
     await expect(client.emit(facturaFixture, CLAVE)).rejects.toBe(fallo);
+  });
+});
+
+describe('SriClient.emit — validación de la claveAcceso provista', () => {
+  it('rechaza una clave que no son 49 dígitos, sin firmar ni tocar el transporte', async () => {
+    const { signer, sign } = stubSigner();
+    const transport = mockTransport();
+    const client = buildClient({ transport, signer });
+
+    await expect(client.emit(facturaFixture, 'CLAVE-BASURA')).rejects.toBeInstanceOf(ValidationError);
+    expect(sign).not.toHaveBeenCalled();
+    expect(transport.enviar).not.toHaveBeenCalled();
+  });
+
+  it('rechaza una clave de 49 dígitos con dígito verificador incorrecto', async () => {
+    const { signer, sign } = stubSigner();
+    const transport = mockTransport();
+    const client = buildClient({ transport, signer });
+
+    const dvMalo = String((Number(CLAVE.slice(48)) + 1) % 10);
+    const claveConDvMalo = CLAVE.slice(0, 48) + dvMalo;
+
+    await expect(client.emit(facturaFixture, claveConDvMalo)).rejects.toThrow(
+      /dígito verificador/i,
+    );
+    expect(sign).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      'ruc',
+      { ...facturaFixture, infoTributaria: { ...facturaFixture.infoTributaria, ruc: '1790011002001' } },
+    ],
+    [
+      'secuencial',
+      {
+        ...facturaFixture,
+        infoTributaria: { ...facturaFixture.infoTributaria, secuencial: '000000999' },
+      },
+    ],
+    ['fecha (ddmmyyyy)', { ...facturaFixture, fechaEmision: '04/08/2026' }],
+  ])('rechaza una clave cuyo %s contradice al documento', async (campo, doc) => {
+    const { signer, sign } = stubSigner();
+    const transport = mockTransport();
+    const client = buildClient({ transport, signer });
+
+    // CLAVE está construida sobre facturaFixture; `doc` cambia uno de sus campos.
+    const err = await client.emit(doc as Comprobante, CLAVE).catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(ValidationError);
+    expect((err as ValidationError).errors.join(' ')).toContain(campo);
+    expect(sign).not.toHaveBeenCalled();
+  });
+
+  it('rechaza una clave calculada para el otro ambiente', async () => {
+    const { signer } = stubSigner();
+    const transport = mockTransport();
+    const client = buildClient({ transport, signer });
+
+    const claveProduccion = claveDe(facturaFixture, '03/08/2026', '12345678', Ambiente.Produccion);
+
+    await expect(client.emit(facturaFixture, claveProduccion)).rejects.toThrow(/ambiente/i);
+  });
+
+  it('acepta una clave coherente y la usa tal cual', async () => {
+    const { signer } = stubSigner();
+    const transport = mockTransport();
+    const client = buildClient({ transport, signer });
+
+    const result = await client.emit(facturaFixture, CLAVE);
+
+    expect(result.claveAcceso).toBe(CLAVE);
+    expect(transport.enviar).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('SriClient.prepare', () => {
+  it('devuelve el XML firmado y una clave de 49 dígitos coherente con el documento', () => {
+    const { signer, sign } = stubSigner();
+    const transport = mockTransport();
+    const client = buildClient({ transport, signer });
+
+    const { claveAcceso, signedXml } = client.prepare(facturaFixture);
+
+    expect(claveAcceso).toMatch(/^\d{49}$/);
+    expect(Number(claveAcceso.slice(48))).toBe(calcularDigitoVerificador(claveAcceso.slice(0, 48)));
+    expect(claveAcceso.slice(0, 8)).toBe('03082026');
+    expect(claveAcceso.slice(8, 10)).toBe(TipoComprobante.Factura);
+    expect(claveAcceso.slice(10, 23)).toBe(facturaFixture.infoTributaria.ruc);
+    expect(claveAcceso.slice(23, 24)).toBe(Ambiente.Pruebas);
+
+    // El XML firmado embebe exactamente esa clave y pasó por el firmador.
+    expect(signedXml).toContain('<signed>');
+    expect(signedXml).toContain(`<claveAcceso>${claveAcceso}</claveAcceso>`);
+    expect(sign).toHaveBeenCalledTimes(1);
+  });
+
+  it('no toca el transporte: prepare() es puramente local', () => {
+    const { signer } = stubSigner();
+    const transport = mockTransport();
+    const client = buildClient({ transport, signer });
+
+    client.prepare(facturaFixture);
+
+    expect(transport.enviar).not.toHaveBeenCalled();
+    expect(transport.autorizar).not.toHaveBeenCalled();
+  });
+
+  it('reusa la clave provista cuando es coherente, y la rechaza cuando no lo es', () => {
+    const { signer } = stubSigner();
+    const transport = mockTransport();
+    const client = buildClient({ transport, signer });
+
+    expect(client.prepare(facturaFixture, CLAVE).claveAcceso).toBe(CLAVE);
+    expect(() => client.prepare(facturaFixture, 'CLAVE-BASURA')).toThrow(ValidationError);
+  });
+
+  it('valida el documento igual que emit()', () => {
+    const { signer } = stubSigner();
+    const transport = mockTransport();
+    const client = buildClient({ transport, signer });
+
+    const docInvalido: Comprobante = { ...facturaFixture, totalSinImpuestos: 'no-es-un-monto' };
+
+    expect(() => client.prepare(docInvalido)).toThrow(ValidationError);
   });
 });
 

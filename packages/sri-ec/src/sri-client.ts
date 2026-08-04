@@ -3,11 +3,11 @@ import { randomInt } from 'node:crypto';
 import { TipoComprobante, type Ambiente } from './catalogs/index.js';
 import type { Comprobante } from './documents/index.js';
 import type { EmissionResult, EmissionStatus } from './emission/index.js';
-import { ValidationError } from './errors/index.js';
+import { CommunicationError, ValidationError } from './errors/index.js';
 import { assertValid } from './schemas/index.js';
 import { XadesSigner, type Certificate, type Clock } from './signing/index.js';
 import { FetchSoapTransport, type AuthorizationOutcome, type SriTransport } from './transport/index.js';
-import { generarClaveAcceso } from './utils/clave-acceso.js';
+import { calcularDigitoVerificador, generarClaveAcceso } from './utils/clave-acceso.js';
 import { serializerFor } from './xml/index.js';
 
 /**
@@ -28,6 +28,18 @@ export interface SriClientOptions {
   clock?: Clock;
   /** `false` para saltar `assertValid()` (zod + BusinessValidator) antes de firmar. Por defecto `true`. */
   validate?: boolean;
+}
+
+/**
+ * Comprobante ya listo para despachar: el par `claveAcceso`/`signedXml` que
+ * produce {@link SriClient.prepare}. Es la única evidencia recuperable de un
+ * comprobante — persístalo antes de enviarlo.
+ */
+export interface PreparedComprobante {
+  /** Clave de acceso de 49 dígitos embebida en el XML firmado. */
+  claveAcceso: string;
+  /** XML del comprobante ya serializado y firmado (XAdES-BES). */
+  signedXml: string;
 }
 
 /**
@@ -54,6 +66,45 @@ export class SriClient {
   }
 
   /**
+   * Valida, calcula (o verifica) la clave de acceso, serializa y firma `doc`
+   * — todo lo que hace {@link emit} **antes** de tocar la red — y devuelve el
+   * par `{ claveAcceso, signedXml }`.
+   *
+   * Es la vía soportada para obtener un comprobante firmado sin emitirlo:
+   * alimentar un {@link BatchEmitter} (`batch.add(claveAcceso, signedXml)`),
+   * encolarlo en un worker, archivarlo, o despacharlo con un transporte
+   * propio. Reimplementarlo por fuera no es viable: la generación de la clave
+   * (código numérico aleatorio, fecha por tipo de comprobante — `GuiaRemision`
+   * usa `fechaIniTransporte`, no `fechaEmision`) es privada por diseño.
+   *
+   * **Persista el resultado antes de enviarlo.** Una vez que el XML sale a la
+   * red, la `claveAcceso` es el único identificador con el que se puede
+   * resolver el comprobante ante el SRI (`authorize()`).
+   *
+   * @param doc Comprobante a preparar (unión discriminada por `tipo`).
+   * @param claveAcceso Clave de 49 dígitos ya calculada; si se omite, se
+   * genera. Si se provee, se verifica (formato, dígito verificador y
+   * coherencia con los campos del documento) — ver {@link emit}.
+   * @throws ValidationError si `doc` no pasa `assertValid()` (salvo
+   * `validate: false`), si el ambiente no coincide, o si la `claveAcceso`
+   * provista es inválida o contradice al documento.
+   */
+  prepare(doc: Comprobante, claveAcceso?: string): PreparedComprobante {
+    if (this.validateDoc) {
+      assertValid(doc);
+    }
+    this.assertAmbienteConsistente(doc);
+
+    const clave =
+      claveAcceso === undefined
+        ? this.generarClaveAccesoPara(doc)
+        : this.assertClaveAccesoCoherente(claveAcceso, doc);
+
+    const xml = serializerFor(doc.tipo).serialize(doc, clave);
+    return { claveAcceso: clave, signedXml: this.signer.sign(xml, this.certificate) };
+  }
+
+  /**
    * Emite `doc` al SRI: valida (salvo `validate: false`), calcula o reusa
    * `claveAcceso`, serializa, firma y ejecuta recepción + autorización.
    *
@@ -65,34 +116,43 @@ export class SriClient {
    *   `AUTORIZADO` → `AUTORIZADO`; `EN PROCESO`/`EN PROCESAMIENTO` →
    *   `EN_PROCESO`; cualquier otro valor → `RECHAZADO`/`AUTORIZACION`.
    * - `CommunicationError` (fallo de red/timeout/SOAP fault) de `transport`
-   *   se propaga tal cual — nunca se convierte en un `EmissionResult`, ya
-   *   que a diferencia de un rechazo del SRI (una respuesta válida con un
-   *   estado desfavorable), una falla de comunicación no permite saber si
-   *   el comprobante llegó a procesarse.
+   *   se propaga — nunca se convierte en un `EmissionResult`, ya que a
+   *   diferencia de un rechazo del SRI (una respuesta válida con un estado
+   *   desfavorable), una falla de comunicación no permite saber si el
+   *   comprobante llegó a procesarse. El error se re-lanza **enriquecido**
+   *   con `claveAcceso` y `signedXml` (ver {@link CommunicationError}).
+   *
+   * ⚠️ **Ante un `CommunicationError`, el caller DEBE persistir
+   * `err.claveAcceso` y `err.signedXml` antes de reintentar nada**, y
+   * resolver el estado real del comprobante con
+   * `authorize(err.claveAcceso)` — **nunca** con un `emit()` nuevo: cada
+   * llamada genera un código numérico aleatorio distinto, así que un reintento
+   * produciría otra clave de acceso, dejaría el comprobante original
+   * irresoluble ante el SRI (que puede haberlo aceptado) y duplicaría el
+   * secuencial. Si necesita el par clave/XML por adelantado en vez de
+   * rescatarlo del error, use {@link prepare}.
    *
    * @param doc Comprobante a emitir (unión discriminada por `tipo`).
    * @param claveAcceso Clave de 49 dígitos ya calculada; si se omite, se
    * genera con {@link generarClaveAcceso} (fecha del propio `doc`, RUC/serie/
    * secuencial de `infoTributaria`, ambiente del cliente, código numérico
-   * aleatorio de 8 dígitos).
+   * aleatorio de 8 dígitos). Si se provee, se verifica: 49 dígitos, dígito
+   * verificador Módulo 11 correcto, y coherencia campo a campo con el
+   * documento (fecha, tipo de comprobante, RUC, ambiente, serie y
+   * secuencial) — una clave arbitraria quedaría firmada dentro del XML.
    * @throws ValidationError si `doc` no pasa `assertValid()` (salvo
-   * `validate: false`), o si `doc.infoTributaria.ambiente` no coincide con
+   * `validate: false`), si `doc.infoTributaria.ambiente` no coincide con
    * el ambiente del cliente — enviar a un ambiente distinto del declarado
    * en el propio XML produciría un comprobante inconsistente que el SRI
-   * rechazaría de todos modos, así que se falla rápido, antes de firmar.
+   * rechazaría de todos modos, así que se falla rápido, antes de firmar —, o
+   * si la `claveAcceso` provista es inválida o contradice al documento.
    */
   async emit(doc: Comprobante, claveAcceso?: string): Promise<EmissionResult> {
-    if (this.validateDoc) {
-      assertValid(doc);
-    }
-    this.assertAmbienteConsistente(doc);
+    const { claveAcceso: clave, signedXml } = this.prepare(doc, claveAcceso);
 
-    const clave = claveAcceso ?? this.generarClaveAccesoPara(doc);
-
-    const xml = serializerFor(doc.tipo).serialize(doc, clave);
-    const signedXml = this.signer.sign(xml, this.certificate);
-
-    const reception = await this.transport.enviar(signedXml, this.ambiente);
+    const reception = await withComprobanteContext(clave, signedXml, () =>
+      this.transport.enviar(signedXml, this.ambiente),
+    );
     if (reception.estado !== 'RECIBIDA') {
       return {
         status: 'RECHAZADO',
@@ -103,7 +163,9 @@ export class SriClient {
       };
     }
 
-    const auth = await this.transport.autorizar(clave, this.ambiente);
+    const auth = await withComprobanteContext(clave, signedXml, () =>
+      this.transport.autorizar(clave, this.ambiente),
+    );
     const status = mapEstadoAutorizacion(auth.estado);
 
     return {
@@ -147,6 +209,67 @@ export class SriClient {
     }
   }
 
+  /**
+   * Verifica una `claveAcceso` provista por el caller antes de que quede
+   * embebida (y firmada) dentro del XML. Sin esto, `emit(doc, 'BASURA')`
+   * produciría un comprobante firmado con una clave que el SRI rechaza — o,
+   * peor, una clave sintácticamente válida pero de otro documento.
+   *
+   * Se comprueban, en orden: formato (49 dígitos exactos), dígito verificador
+   * Módulo 11 sobre los primeros 48, y coherencia de los campos embebidos
+   * contra el documento según el layout de la ficha técnica del SRI:
+   *
+   * ```
+   * [0,8)  fecha ddmmyyyy   [8,10) codDoc      [10,23) RUC     [23,24) ambiente
+   * [24,30) estab+ptoEmi    [30,39) secuencial [39,47) código numérico
+   * [47,48) tipoEmisión     [48,49) dígito verificador
+   * ```
+   *
+   * El código numérico (aleatorio por definición) y el tipo de emisión no se
+   * cotejan: el primero no tiene contraparte en el documento y el segundo ya
+   * queda cubierto por el dígito verificador si el caller derivó la clave del
+   * mismo `infoTributaria`.
+   */
+  private assertClaveAccesoCoherente(claveAcceso: string, doc: Comprobante): string {
+    if (!/^\d{49}$/.test(claveAcceso)) {
+      throw new ValidationError('Clave de acceso inválida', [
+        `claveAcceso debe tener exactamente 49 dígitos (recibido: ${claveAcceso.length} caracteres).`,
+      ]);
+    }
+
+    const base48 = claveAcceso.slice(0, 48);
+    const dv = claveAcceso.slice(48);
+    const esperado = String(calcularDigitoVerificador(base48));
+    if (dv !== esperado) {
+      throw new ValidationError('Clave de acceso inválida', [
+        `El dígito verificador de claveAcceso es '${dv}' pero el Módulo 11 sobre los primeros 48 dígitos da '${esperado}'.`,
+      ]);
+    }
+
+    const info = doc.infoTributaria;
+    const esperados: Array<[campo: string, enClave: string, enDocumento: string]> = [
+      ['fecha (ddmmyyyy)', claveAcceso.slice(0, 8), fechaClaveAccesoDe(doc).replace(/\//g, '')],
+      ['tipo de comprobante (codDoc)', claveAcceso.slice(8, 10), doc.tipo],
+      ['ruc', claveAcceso.slice(10, 23), info.ruc],
+      ['ambiente', claveAcceso.slice(23, 24), this.ambiente],
+      ['serie (estab + ptoEmi)', claveAcceso.slice(24, 30), `${info.estab}${info.ptoEmi}`],
+      ['secuencial', claveAcceso.slice(30, 39), info.secuencial],
+    ];
+
+    const errores = esperados
+      .filter(([, enClave, enDocumento]) => enClave !== enDocumento)
+      .map(
+        ([campo, enClave, enDocumento]) =>
+          `claveAcceso declara ${campo} = '${enClave}' pero el comprobante dice '${enDocumento}'.`,
+      );
+
+    if (errores.length > 0) {
+      throw new ValidationError('Clave de acceso incoherente con el comprobante', errores);
+    }
+
+    return claveAcceso;
+  }
+
   /** Genera la clave de acceso de `doc` cuando el caller no provee una ya calculada. */
   private generarClaveAccesoPara(doc: Comprobante): string {
     const info = doc.infoTributaria;
@@ -182,6 +305,29 @@ function fechaClaveAccesoDe(doc: Comprobante): string {
     return doc.fechaIniTransporte;
   }
   return doc.fechaEmision;
+}
+
+/**
+ * Ejecuta `op` adjuntando `claveAcceso`/`signedXml` a cualquier
+ * `CommunicationError` que escape. Sin esto, un timeout en `enviar()`/
+ * `autorizar()` destruiría la única evidencia del comprobante: el caller se
+ * quedaría sin la clave con la que consultar al SRI (que puede haberlo
+ * aceptado) y sin el XML firmado. Se preserva el `cause` original —
+ * encadenando al error de transporte si este no traía uno propio.
+ */
+async function withComprobanteContext<T>(
+  claveAcceso: string,
+  signedXml: string,
+  op: () => Promise<T>,
+): Promise<T> {
+  try {
+    return await op();
+  } catch (err) {
+    if (err instanceof CommunicationError) {
+      throw new CommunicationError(err.message, err.cause ?? err, { claveAcceso, signedXml });
+    }
+    throw err;
+  }
 }
 
 /** Código numérico aleatorio de 8 dígitos (con ceros a la izquierda) para la clave de acceso. */

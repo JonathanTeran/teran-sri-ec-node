@@ -62,16 +62,47 @@ export class SignatureError extends SriError {
 }
 
 /**
+ * Contexto del comprobante que se estaba emitiendo cuando falló la
+ * comunicación. Lo adjunta {@link SriClient.emit} para que un fallo de red
+ * NO destruya la única evidencia del comprobante: el par
+ * `claveAcceso`/`signedXml`.
+ */
+export interface CommunicationErrorContext {
+  /** Clave de acceso (49 dígitos) del comprobante en vuelo. */
+  claveAcceso?: string;
+  /** XML ya firmado que se estaba enviando (o cuya autorización se consultaba). */
+  signedXml?: string;
+}
+
+/**
  * Error de transporte al comunicarse con el SRI (timeout, red caída, SOAP
  * fault, etc.). `cause` conserva el error original para diagnóstico.
+ *
+ * Cuando el error escapa de `SriClient.emit()`, `claveAcceso`/`signedXml`
+ * traen el comprobante que estaba en vuelo. **Persista ambos antes de
+ * reintentar**: el SRI puede haber recibido y aceptado el comprobante aunque
+ * la respuesta se haya perdido, y un `emit()` nuevo generaría una clave de
+ * acceso distinta (el código numérico es aleatorio por llamada), dejando el
+ * documento original irresoluble y duplicando el secuencial. Para resolver el
+ * estado real use `SriClient.authorize(claveAcceso)`.
  */
 export class CommunicationError extends SriError {
   declare readonly code: 'COMMUNICATION';
   readonly cause?: unknown;
+  /** Clave de acceso del comprobante en vuelo, si el error viene de `emit()`. */
+  readonly claveAcceso?: string;
+  /** XML firmado del comprobante en vuelo, si el error viene de `emit()`. */
+  readonly signedXml?: string;
 
-  constructor(message: string, cause?: unknown) {
+  constructor(message: string, cause?: unknown, context?: CommunicationErrorContext) {
     super(message, 'COMMUNICATION');
     this.cause = cause;
+    if (context?.claveAcceso !== undefined) {
+      this.claveAcceso = context.claveAcceso;
+    }
+    if (context?.signedXml !== undefined) {
+      this.signedXml = context.signedXml;
+    }
     this.name = 'CommunicationError';
     Object.setPrototypeOf(this, CommunicationError.prototype);
   }
