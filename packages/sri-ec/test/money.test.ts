@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { ValidationError } from '../src/errors/index.js';
-import { fromCents, isMonto, toCents } from '../src/utils/money.js';
+import { formatMonto, fromCents, isMonto, toCents } from '../src/utils/money.js';
 
 describe('money', () => {
   describe('toCents', () => {
@@ -67,6 +67,36 @@ describe('money', () => {
 
     it('formatea cero', () => {
       expect(fromCents(0)).toBe('0.00');
+    });
+  });
+
+  describe('formatMonto', () => {
+    it('formatea a 2 decimales un monto que ya viene con 2 decimales', () => {
+      expect(formatMonto('100.00', 2)).toBe('100.00');
+    });
+
+    it('formatea a 6 decimales (escala de cantidad/precioUnitario)', () => {
+      expect(formatMonto('1', 6)).toBe('1.000000');
+      expect(formatMonto('1.000000', 6)).toBe('1.000000');
+    });
+
+    it('rellena con ceros un monto entero a 2 decimales', () => {
+      expect(formatMonto('0', 2)).toBe('0.00');
+      expect(formatMonto('112', 2)).toBe('112.00');
+    });
+
+    it('redondea half-up cuando hay más decimales que la escala destino', () => {
+      expect(formatMonto('1.005', 2)).toBe('1.01');
+      expect(formatMonto('1.004', 2)).toBe('1.00');
+    });
+
+    it('trunca sin redondear cuando el monto ya coincide exactamente con la escala destino', () => {
+      expect(formatMonto('12.345678', 6)).toBe('12.345678');
+    });
+
+    it('lanza ValidationError con un monto inválido', () => {
+      expect(() => formatMonto('abc', 2)).toThrow(ValidationError);
+      expect(() => formatMonto('-1.00', 2)).toThrow(ValidationError);
     });
   });
 
