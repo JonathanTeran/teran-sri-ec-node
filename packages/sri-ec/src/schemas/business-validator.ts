@@ -91,8 +91,13 @@ function sumCentsOrNull(montos: readonly string[]): number | null {
  * Nota: la validación *online* contra el SRI (`RucValidator::checkOnline()`
  * en PHP) es responsabilidad de Task 11 (`SriClient`/RUC), no de este
  * módulo — aquí solo vive la parte local/síncrona.
+ *
+ * Exportada (no solo de uso interno de `checkRuc`) porque el futuro port de
+ * `Utils/RucValidator.php` (Task 14) llama a `BusinessValidator::validarRuc()`
+ * como paso local antes de la verificación online (`RucValidator.php:16`) —
+ * debe reusar exactamente esta función en vez de duplicar el algoritmo.
  */
-function esRucLocalValido(ruc: string): boolean {
+export function esRucLocalValido(ruc: string): boolean {
   if (!/^\d{13}$/.test(ruc)) return false;
 
   const tercerDigito = Number(ruc[2]);
@@ -122,8 +127,14 @@ function checkRuc(ruc: string | undefined, path: string): string[] {
  *
  * `mb_strlen` (PHP, cuenta caracteres Unicode) se replica con
  * `[...valor].length` (cuenta code points, no code units UTF-16).
+ *
+ * Exportada por la misma razón que {@link esRucLocalValido}: en PHP,
+ * `SRI.php:239` llama a `BusinessValidator::validarCampos()` directamente
+ * (fuera de la clase) antes de generar el XML — cualquier port futuro de ese
+ * flujo (p.ej. un `SriClient.emit()` de Task 11+) debe poder reusar esta
+ * función en vez de reimplementar las longitudes máximas.
  */
-function checkCamposLocales(info: InfoTributaria): string[] {
+export function checkCamposLocales(info: InfoTributaria): string[] {
   const limites: ReadonlyArray<readonly [keyof InfoTributaria, number]> = [
     ['razonSocial', 300],
     ['nombreComercial', 300],

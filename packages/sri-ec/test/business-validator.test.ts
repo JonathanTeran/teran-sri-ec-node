@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { Factura, NotaCredito, NotaDebito, Retencion } from '../src/documents/index.js';
 import { ValidationError } from '../src/errors/index.js';
-import { assertValid, validateBusiness } from '../src/schemas/business-validator.js';
+import { assertValid, esRucLocalValido, validateBusiness } from '../src/schemas/business-validator.js';
 import {
   facturaFixture,
   guiaRemisionFixture,
@@ -11,6 +11,28 @@ import {
   notaDebitoFixture,
   retencionFixture,
 } from './documents.test.js';
+
+describe('esRucLocalValido', () => {
+  it('acepta un RUC válido (13 dígitos, tercer dígito 9, establecimiento != 000)', () => {
+    expect(esRucLocalValido('1790011001001')).toBe(true);
+  });
+
+  it('rechaza un tercer dígito de régimen inválido (7: no está en 0-6 ni es 9)', () => {
+    expect(esRucLocalValido('1770011001001')).toBe(false);
+  });
+
+  it('rechaza un código de establecimiento "000"', () => {
+    expect(esRucLocalValido('1790011001000')).toBe(false);
+  });
+
+  it('rechaza longitudes distintas de 13 dígitos', () => {
+    expect(esRucLocalValido('179001100100')).toBe(false);
+  });
+
+  it('rechaza strings no numéricos', () => {
+    expect(esRucLocalValido('179001100100a')).toBe(false);
+  });
+});
 
 describe('validateBusiness', () => {
   it.each([
