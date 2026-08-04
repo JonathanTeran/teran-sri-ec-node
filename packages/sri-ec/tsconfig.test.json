@@ -1,0 +1,10 @@
+{
+  "//": "Config de typecheck: cubre src Y test en una sola pasada (tsconfig.json solo incluye src, porque es el que alimenta al build). Sin rootDir de src ni emisión: aquí no se compila nada, solo se verifican tipos.",
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": "."
+  },
+  "include": ["src", "test"],
+  "exclude": ["dist", "node_modules"]
+}

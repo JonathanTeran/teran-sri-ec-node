@@ -211,18 +211,18 @@ function textResponse(body: string, status = 200): Response {
 
 describe('validarRucOnline', () => {
   it('RUC local-inválido: retorna false sin llamar a fetch', async () => {
-    const fetchMock = vi.fn();
+    const fetchMock = vi.fn<typeof fetch>();
 
-    const result = await validarRucOnline('123', { fetch: fetchMock as unknown as typeof fetch });
+    const result = await validarRucOnline('123', { fetch: fetchMock });
 
     expect(result).toBe(false);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('RUC local-válido + SRI responde "true": retorna true', async () => {
-    const fetchMock = vi.fn(async () => textResponse('true'));
+    const fetchMock = vi.fn<typeof fetch>(async () => textResponse('true'));
 
-    const result = await validarRucOnline('1790011001001', { fetch: fetchMock as unknown as typeof fetch });
+    const result = await validarRucOnline('1790011001001', { fetch: fetchMock });
 
     expect(result).toBe(true);
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -231,73 +231,73 @@ describe('validarRucOnline', () => {
   });
 
   it('RUC local-válido + SRI responde "false" explícitamente: retorna false', async () => {
-    const fetchMock = vi.fn(async () => textResponse('false'));
+    const fetchMock = vi.fn<typeof fetch>(async () => textResponse('false'));
 
-    const result = await validarRucOnline('1790011001001', { fetch: fetchMock as unknown as typeof fetch });
+    const result = await validarRucOnline('1790011001001', { fetch: fetchMock });
 
     expect(result).toBe(false);
   });
 
   it('RUC local-válido + SRI responde "true\\n" (espacio en blanco incidental): retorna true (se recorta antes de comparar)', async () => {
-    const fetchMock = vi.fn(async () => textResponse('true\n'));
+    const fetchMock = vi.fn<typeof fetch>(async () => textResponse('true\n'));
 
-    const result = await validarRucOnline('1790011001001', { fetch: fetchMock as unknown as typeof fetch });
+    const result = await validarRucOnline('1790011001001', { fetch: fetchMock });
 
     expect(result).toBe(true);
   });
 
   it('RUC local-válido + SRI responde " false " (espacios alrededor): retorna false', async () => {
-    const fetchMock = vi.fn(async () => textResponse(' false '));
+    const fetchMock = vi.fn<typeof fetch>(async () => textResponse(' false '));
 
-    const result = await validarRucOnline('1790011001001', { fetch: fetchMock as unknown as typeof fetch });
+    const result = await validarRucOnline('1790011001001', { fetch: fetchMock });
 
     expect(result).toBe(false);
   });
 
   it('RUC local-válido + cuerpo inesperado (HTML, ni "true" ni "false"): fallback a local (true), no se interpreta como false', async () => {
-    const fetchMock = vi.fn(async () => textResponse('<html><body>Error</body></html>'));
+    const fetchMock = vi.fn<typeof fetch>(async () => textResponse('<html><body>Error</body></html>'));
 
-    const result = await validarRucOnline('1790011001001', { fetch: fetchMock as unknown as typeof fetch });
+    const result = await validarRucOnline('1790011001001', { fetch: fetchMock });
 
     expect(result).toBe(true);
   });
 
   it('RUC local-válido + cuerpo vacío: fallback a local (true)', async () => {
-    const fetchMock = vi.fn(async () => textResponse(''));
+    const fetchMock = vi.fn<typeof fetch>(async () => textResponse(''));
 
-    const result = await validarRucOnline('1790011001001', { fetch: fetchMock as unknown as typeof fetch });
+    const result = await validarRucOnline('1790011001001', { fetch: fetchMock });
 
     expect(result).toBe(true);
   });
 
   it('RUC local-válido + cuerpo con capitalización distinta ("True"): fallback a local (true), no se interpreta como false', async () => {
-    const fetchMock = vi.fn(async () => textResponse('True'));
+    const fetchMock = vi.fn<typeof fetch>(async () => textResponse('True'));
 
-    const result = await validarRucOnline('1790011001001', { fetch: fetchMock as unknown as typeof fetch });
+    const result = await validarRucOnline('1790011001001', { fetch: fetchMock });
 
     expect(result).toBe(true);
   });
 
   it('RUC local-válido + HTTP no-200: fallback a local (true)', async () => {
-    const fetchMock = vi.fn(async () => textResponse('Internal Server Error', 500));
+    const fetchMock = vi.fn<typeof fetch>(async () => textResponse('Internal Server Error', 500));
 
-    const result = await validarRucOnline('1790011001001', { fetch: fetchMock as unknown as typeof fetch });
+    const result = await validarRucOnline('1790011001001', { fetch: fetchMock });
 
     expect(result).toBe(true);
   });
 
   it('RUC local-válido + fetch rechaza (red caída): fallback a local (true)', async () => {
-    const fetchMock = vi.fn(async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () => {
       throw new TypeError('fetch failed');
     });
 
-    const result = await validarRucOnline('1790011001001', { fetch: fetchMock as unknown as typeof fetch });
+    const result = await validarRucOnline('1790011001001', { fetch: fetchMock });
 
     expect(result).toBe(true);
   });
 
   it('RUC local-válido + timeout (AbortSignal por timeoutMs): fallback a local (true)', async () => {
-    const fetchMock = vi.fn((_url: string | URL, init?: RequestInit) => {
+    const fetchMock = vi.fn<typeof fetch>((_url, init) => {
       return new Promise<Response>((resolve, reject) => {
         const signal = init?.signal;
         signal?.addEventListener('abort', () => {
@@ -311,7 +311,7 @@ describe('validarRucOnline', () => {
     });
 
     const result = await validarRucOnline('1790011001001', {
-      fetch: fetchMock as unknown as typeof fetch,
+      fetch: fetchMock,
       timeoutMs: 10,
     });
 
@@ -320,12 +320,12 @@ describe('validarRucOnline', () => {
 
   it('usa el timeoutMs por defecto (3000ms) si no se especifica opts.timeoutMs', async () => {
     let capturedSignal: AbortSignal | undefined;
-    const fetchMock = vi.fn((_url: string | URL, init?: RequestInit) => {
+    const fetchMock = vi.fn<typeof fetch>((_url, init) => {
       capturedSignal = init?.signal ?? undefined;
       return Promise.resolve(textResponse('true'));
     });
 
-    await validarRucOnline('1790011001001', { fetch: fetchMock as unknown as typeof fetch });
+    await validarRucOnline('1790011001001', { fetch: fetchMock });
 
     expect(capturedSignal?.aborted).toBe(false);
   });
