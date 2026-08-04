@@ -29,7 +29,8 @@
   "author": "Jonathan Terán",
   "scripts": {
     "build": "tsup",
-    "test": "vitest run"
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "node-forge": "^1.4.0",
