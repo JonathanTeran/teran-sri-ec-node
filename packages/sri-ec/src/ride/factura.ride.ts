@@ -52,7 +52,12 @@ export async function generarRideFactura(opciones: RideOptions<Factura>): Promis
     razonSocial: documento.infoTributaria.razonSocial,
     nombreComercial: documento.infoTributaria.nombreComercial,
     dirMatriz: documento.infoTributaria.dirMatriz,
+    // dirEstablecimiento/contribuyenteEspecial: fix round 1, gap real
+    // confirmado del reviewer — Factura era el único de los 6 comprobantes
+    // que no los modelaba (ver `documents/factura.ts`).
+    dirEstablecimiento: documento.dirEstablecimiento,
     obligadoContabilidad: documento.obligadoContabilidad,
+    contribuyenteEspecial: documento.contribuyenteEspecial,
     agenteRetencion: documento.infoTributaria.agenteRetencion,
     contribuyenteRimpe: documento.infoTributaria.contribuyenteRimpe,
   };

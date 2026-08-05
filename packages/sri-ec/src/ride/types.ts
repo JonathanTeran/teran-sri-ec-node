@@ -125,11 +125,18 @@ export interface AreaRide {
  * `NotaDebito.impuestos` — `drawTotales` deriva la tarifa a partir de
  * `codigoPorcentaje` (ver `LABEL_CODIGO_PORCENTAJE` en `blocks.ts`), no la
  * necesita como campo aparte.
+ *
+ * `totalDescuento` es opcional (fix round 1, hallazgo confirmado del
+ * reviewer): `NotaCredito` y `NotaDebito` no lo modelan en absoluto (la
+ * primera tiene `valorModificacion`, la segunda `valorTotal`, sin
+ * `totalDescuento`) — de haber sido obligatorio, Task 2 habría tenido que
+ * inventar un `'0.00'` sin respaldo en el documento real. `drawTotales` omite
+ * la línea "Total descuento" cuando está ausente.
  */
 export interface TotalesRide {
   impuestos: TotalImpuesto[];
   totalSinImpuestos: string;
-  totalDescuento: string;
+  totalDescuento?: string;
   propina?: string;
   importeTotal: string;
 }

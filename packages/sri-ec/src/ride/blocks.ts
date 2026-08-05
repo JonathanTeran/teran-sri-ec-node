@@ -1,6 +1,7 @@
 import { Ambiente, TipoComprobante, TipoEmision } from '../catalogs/index.js';
 import { FormaPago } from '../catalogs/forma-pago.js';
 import type { Detalle, InfoTributaria, Pago, TotalImpuesto } from '../documents/index.js';
+import { SriError } from '../errors/index.js';
 import { formatMonto, fromCents, toCents } from '../utils/money.js';
 import type { AreaRide, ComprobanteRide, CompradorRide, EmisorRide, TotalesRide } from './types.js';
 
@@ -154,7 +155,19 @@ export function drawEmisor(doc: PDFKit.PDFDocument, emisor: EmisorRide, area: Ar
   const width = area.width - PADDING_CAJA * 2;
 
   if (emisor.logo) {
-    doc.image(Buffer.from(emisor.logo), x, y, { fit: [width, 50], align: 'center' });
+    try {
+      doc.image(Buffer.from(emisor.logo), x, y, { fit: [width, 50], align: 'center' });
+    } catch {
+      // pdfkit solo reconoce PNG/JPEG (lee la firma de bytes, no una extensión
+      // de archivo) y ante cualquier otro formato o un buffer corrupto lanza
+      // un `Error` genérico ("Unknown image format") sin `.code` — se envuelve
+      // en un SriError con la causa probable y el remedio, igual que
+      // `deps.ts` envuelve el fallo de `import()` de una dependencia opcional.
+      throw new SriError(
+        'El logo del emisor no se pudo procesar: formato no soportado o archivo corrupto. Usa PNG o JPG.',
+        'RIDE_INVALID_LOGO',
+      );
+    }
     y += 54;
   }
 
@@ -456,9 +469,10 @@ function sumarValorPorCodigo(impuestos: TotalImpuesto[], codigo: string): number
 
 /**
  * Bloque totales: subtotales por tarifa de IVA, subtotal sin impuestos,
- * total descuento, ICE (si aplica), IVA, propina (si viene) y valor total.
- * Toda la suma de impuestos usa `toCents`/`fromCents` — nunca aritmética de
- * punto flotante sobre los montos.
+ * total descuento (si viene — `NotaCredito`/`NotaDebito` no lo modelan),
+ * ICE (si aplica), IVA, propina (si viene) y valor total. Toda la suma de
+ * impuestos usa `toCents`/`fromCents` — nunca aritmética de punto flotante
+ * sobre los montos.
  */
 export function drawTotales(doc: PDFKit.PDFDocument, totales: TotalesRide, area: AreaRide): number {
   let y = iniciarCaja(area);
@@ -476,7 +490,10 @@ export function drawTotales(doc: PDFKit.PDFDocument, totales: TotalesRide, area:
   }
 
   y = escribirLinea(doc, x, y, width, 'Subtotal sin impuestos', formatMonto(totales.totalSinImpuestos, 2));
-  y = escribirLinea(doc, x, y, width, 'Total descuento', formatMonto(totales.totalDescuento, 2));
+
+  if (totales.totalDescuento !== undefined) {
+    y = escribirLinea(doc, x, y, width, 'Total descuento', formatMonto(totales.totalDescuento, 2));
+  }
 
   const ice = sumarValorPorCodigo(totales.impuestos, CODIGO_IMPUESTO_ICE);
   if (ice > 0) {

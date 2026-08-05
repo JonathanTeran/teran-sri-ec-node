@@ -11,9 +11,18 @@ import type { RideOptions } from './types.js';
  * NO importa nada de este directorio: quien solo emite/firma comprobantes no
  * paga el costo de `pdfkit`/`qrcode`, que además son `optionalDependencies`
  * (ver `deps.ts`).
+ *
+ * Deliberadamente NO se reexporta `blocks.js`: sus `draw*` toman
+ * `PDFKit.PDFDocument` como parámetro, y `@types/pdfkit` es solo
+ * devDependency de este paquete — si el barrel público los reexportara,
+ * `dist/ride/index.d.ts` referenciaría el namespace ambiental `PDFKit` y
+ * cualquier consumidor con `skipLibCheck: false` (aunque solo use
+ * `generarRide`) fallaría con `TS2503: Cannot find namespace 'PDFKit'`
+ * (hallazgo confirmado del reviewer, fix round 1). Los helpers de `blocks.ts`
+ * son el contrato interno que Task 2 consume por import relativo
+ * (`./blocks.js`) dentro del mismo directorio `src/ride/` — no API pública.
  */
 export * from './types.js';
-export * from './blocks.js';
 export { generarRideFactura } from './factura.ride.js';
 export { generarQr } from './qr.js';
 

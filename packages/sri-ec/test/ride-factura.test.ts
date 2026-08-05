@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { TipoComprobante } from '../src/catalogs/index.js';
-import type { NotaCredito } from '../src/documents/index.js';
+import type { Factura, NotaCredito } from '../src/documents/index.js';
 import { generarClaveAcceso } from '../src/utils/clave-acceso.js';
 import { facturaFixture } from './documents.test.js';
 
@@ -20,6 +20,22 @@ async function cargarRide() {
   const { generarRide } = await import('../src/ride/index.js');
   const { SriError } = await import('../src/errors/index.js');
   return { generarRide, SriError };
+}
+
+/**
+ * Carga `drawTotales` y `crearDocumentoRide` directamente por import
+ * relativo (no vía el barrel público — `blocks.ts` es contrato interno para
+ * Task 2, no API pública, ver `index.ts`). Se usa para probar
+ * `TotalesRide.totalDescuento` opcional en aislamiento: hoy ningún
+ * `*.ride.ts` puede producir un `TotalesRide` sin `totalDescuento` (Factura
+ * lo modela obligatorio), así que la única forma de cubrir esa rama antes de
+ * que Task 2 exista (NotaCredito/NotaDebito, que no lo modelan) es llamar al
+ * bloque directamente.
+ */
+async function cargarBloqueTotales() {
+  const { crearDocumentoRide } = await import('../src/ride/pdf-doc.js');
+  const { drawTotales } = await import('../src/ride/blocks.js');
+  return { crearDocumentoRide, drawTotales };
 }
 
 /**
@@ -100,6 +116,35 @@ describe('ride: factura', () => {
     expect(texto).toContain(facturaFixture.importeTotal);
   });
 
+  it('renderiza dirEstablecimiento/contribuyenteEspecial en el bloque emisor cuando el documento los trae (fix round 1, gap real confirmado del reviewer)', async () => {
+    const { generarRide } = await cargarRide();
+
+    const facturaConDireccion: Factura = {
+      ...facturaFixture,
+      dirEstablecimiento: 'Av. Amazonas N24-03, Quito',
+      contribuyenteEspecial: '5368',
+    };
+
+    const pdf = await generarRide({ documento: facturaConDireccion, claveAcceso });
+    const texto = await extraerTextoPdf(pdf);
+
+    expect(texto).toContain('Av. Amazonas N24-03, Quito');
+    expect(texto).toContain('5368');
+  });
+
+  it('el logo del emisor con bytes inválidos lanza un SriError claro en vez del error crudo de pdfkit (fix round 1, hallazgo confirmado del reviewer)', async () => {
+    const { generarRide, SriError } = await cargarRide();
+
+    const logoInvalido = new Uint8Array([1, 2, 3, 4, 5, 6]);
+
+    await expect(generarRide({ documento: facturaFixture, claveAcceso, logo: logoInvalido })).rejects.toThrow(
+      SriError,
+    );
+    await expect(generarRide({ documento: facturaFixture, claveAcceso, logo: logoInvalido })).rejects.toThrow(
+      /PNG o JPG/,
+    );
+  });
+
   it('sin autorización: el RIDE se genera igual, marcado como no autorizado', async () => {
     const { generarRide } = await cargarRide();
 
@@ -150,6 +195,46 @@ describe('ride: factura', () => {
     await expect(generarRide({ documento: facturaFixture, claveAcceso })).rejects.toThrow(
       /npm install pdfkit qrcode/,
     );
+  });
+
+  it('drawTotales omite "Total descuento" cuando TotalesRide.totalDescuento está ausente (fix round 1, hallazgo confirmado del reviewer)', async () => {
+    const { crearDocumentoRide, drawTotales } = await cargarBloqueTotales();
+    const { doc, finalizar } = await crearDocumentoRide('A4');
+
+    drawTotales(
+      doc,
+      {
+        // Simula el shape de NotaCredito/NotaDebito (Task 2): sin totalDescuento.
+        impuestos: [{ codigo: '2', codigoPorcentaje: '4', baseImponible: '100.00', valor: '12.00' }],
+        totalSinImpuestos: '100.00',
+        importeTotal: '112.00',
+      },
+      { x: 36, y: 36, width: 250 },
+    );
+
+    const texto = await extraerTextoPdf(await finalizar());
+    expect(texto).not.toContain('Total descuento');
+    expect(texto).toContain('VALOR TOTAL');
+  });
+
+  it('drawTotales sigue emitiendo "Total descuento" cuando sí está presente', async () => {
+    const { crearDocumentoRide, drawTotales } = await cargarBloqueTotales();
+    const { doc, finalizar } = await crearDocumentoRide('A4');
+
+    drawTotales(
+      doc,
+      {
+        impuestos: [{ codigo: '2', codigoPorcentaje: '4', baseImponible: '100.00', valor: '12.00' }],
+        totalSinImpuestos: '100.00',
+        totalDescuento: '5.00',
+        importeTotal: '107.00',
+      },
+      { x: 36, y: 36, width: 250 },
+    );
+
+    const texto = await extraerTextoPdf(await finalizar());
+    expect(texto).toContain('Total descuento');
+    expect(texto).toContain('5.00');
   });
 
   it('los 5 comprobantes aún no implementados lanzan un SriError anunciando la próxima versión', async () => {
