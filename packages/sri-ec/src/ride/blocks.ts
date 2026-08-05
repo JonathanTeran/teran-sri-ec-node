@@ -241,7 +241,20 @@ export function drawComprobante(
   doc.text(`R.U.C.: ${comprobante.ruc}`, cajaX, y, { width: anchoTexto });
   y = doc.y + ESPACIO_LINEA;
 
-  doc.fontSize(TAMANO_TITULO + 2);
+  // Reduce el tamaño hasta que el nombre del documento quepa en una sola
+  // línea dentro de `anchoTexto` (gap de Task 2, expuesto por los nombres
+  // largos de los 5 comprobantes nuevos: "LIQUIDACIÓN DE COMPRA" y
+  // "COMPROBANTE DE RETENCIÓN" no caben al tamaño fijo de 11pt en la columna
+  // angosta que queda junto al QR — pdfkit los envolvía a dos líneas,
+  // partiendo el título a la mitad). `nombreDocumento` corto (p.ej.
+  // "FACTURA") nunca dispara el bucle: ya cabe al tamaño máximo.
+  const TAMANO_NOMBRE_DOC_MAX = TAMANO_TITULO + 2;
+  let tamanoNombreDoc = TAMANO_NOMBRE_DOC_MAX;
+  doc.fontSize(tamanoNombreDoc);
+  while (doc.widthOfString(comprobante.nombreDocumento) > anchoTexto && tamanoNombreDoc > TAMANO_TEXTO) {
+    tamanoNombreDoc -= 0.5;
+    doc.fontSize(tamanoNombreDoc);
+  }
   doc.text(comprobante.nombreDocumento, cajaX, y, { width: anchoTexto });
   y = doc.y + ESPACIO_LINEA;
 
@@ -328,30 +341,43 @@ export function drawComprador(doc: PDFKit.PDFDocument, comprador: CompradorRide,
   return cerrarCaja(doc, area, y);
 }
 
-interface ColumnaDetalle {
+export interface ColumnaTabla {
   header: string;
   width: number;
   align: 'left' | 'right';
 }
 
-/** Reparte `anchoTotal` entre las 7 columnas del detalle; la última columna absorbe el redondeo. */
-function construirColumnasDetalle(anchoTotal: number): ColumnaDetalle[] {
-  const specs: Array<[string, number, 'left' | 'right']> = [
-    ['Cód. Principal', 0.13, 'left'],
-    ['Cód. Auxiliar', 0.11, 'left'],
-    ['Cant.', 0.07, 'right'],
-    ['Descripción', 0.34, 'left'],
-    ['P. Unitario', 0.12, 'right'],
-    ['Descuento', 0.1, 'right'],
-    ['P. Total', 0.13, 'right'],
-  ];
+/**
+ * Reparte `anchoTotal` entre columnas según las fracciones de `specs`; la
+ * última columna absorbe el redondeo. Extraído de lo que hasta Task 1 era
+ * `construirColumnasDetalle` (privado, solo para las 7 columnas del
+ * detalle) — ahora es el punto de reuso explícito que Task 2 consume para
+ * armar las tablas propias de nota de débito (motivos), guía de remisión
+ * (detalle de destinatario) y retención (documentos sustento) sin repetir
+ * el cálculo de anchos por cada tipo.
+ */
+export function construirColumnas(
+  anchoTotal: number,
+  specs: Array<[string, number, 'left' | 'right']>,
+): ColumnaTabla[] {
   const widths = specs.map(([, frac]) => Math.floor(anchoTotal * frac));
   const usado = widths.reduce((a, b) => a + b, 0);
   widths[widths.length - 1] += anchoTotal - usado;
   return specs.map(([header, , align], i) => ({ header, width: widths[i], align }));
 }
 
-/** Celdas de una fila de detalle, en el mismo orden que {@link construirColumnasDetalle}. */
+/** Columnas fijas del detalle de factura/liquidación de compra/nota de crédito. */
+const DETALLE_COLUMN_SPECS: Array<[string, number, 'left' | 'right']> = [
+  ['Cód. Principal', 0.13, 'left'],
+  ['Cód. Auxiliar', 0.11, 'left'],
+  ['Cant.', 0.07, 'right'],
+  ['Descripción', 0.34, 'left'],
+  ['P. Unitario', 0.12, 'right'],
+  ['Descuento', 0.1, 'right'],
+  ['P. Total', 0.13, 'right'],
+];
+
+/** Celdas de una fila de detalle, en el mismo orden que {@link DETALLE_COLUMN_SPECS}. */
 function celdasDetalle(d: Detalle): string[] {
   const extras = d.detallesAdicionales
     ? `\n${Object.entries(d.detallesAdicionales)
@@ -370,22 +396,22 @@ function celdasDetalle(d: Detalle): string[] {
 }
 
 /** Altura que ocupará la fila (la celda más alta, según el wrap de cada columna) más el padding de celda. */
-function alturaFila(doc: PDFKit.PDFDocument, columnas: ColumnaDetalle[], celdas: string[]): number {
+function alturaFilaTabla(doc: PDFKit.PDFDocument, columnas: ColumnaTabla[], celdas: string[]): number {
   const alturas = columnas.map((col, i) => doc.heightOfString(celdas[i], { width: col.width - PADDING_CELDA * 2 }));
   return Math.max(...alturas) + PADDING_CELDA * 2;
 }
 
 /** Dibuja una fila (encabezado o dato) con sus bordes y devuelve el `y` de su borde inferior. */
-function dibujarFilaDetalle(
+function dibujarFilaTabla(
   doc: PDFKit.PDFDocument,
-  columnas: ColumnaDetalle[],
+  columnas: ColumnaTabla[],
   celdas: string[],
   x: number,
   y: number,
   esEncabezado: boolean,
 ): number {
   doc.font(esEncabezado ? FUENTE_NEGRITA : FUENTE_NORMAL).fontSize(TAMANO_TABLA);
-  const alto = alturaFila(doc, columnas, celdas);
+  const alto = alturaFilaTabla(doc, columnas, celdas);
   const anchoTotal = columnas.reduce((s, c) => s + c.width, 0);
 
   if (esEncabezado) {
@@ -416,37 +442,56 @@ function dibujarFilaDetalle(
 }
 
 /**
- * Tabla de detalle: código principal, código auxiliar, cantidad,
- * descripción (con los `detallesAdicionales` como líneas extra bajo la
- * descripción), precio unitario, descuento y precio total. Pagina
- * automáticamente (repitiendo el encabezado) si una fila no cabe en lo que
- * queda de página — la única parte del motor con lógica de salto de página
- * dentro de un bloque, porque es la única cuyo contenido es de longitud
- * variable sin límite práctico.
+ * Tabla genérica: encabezado + filas de celdas ya formateadas (strings), con
+ * paginación fila a fila (repite el encabezado al saltar de página, ver
+ * {@link asegurarEspacio}). Es el motor que {@link drawTablaDetalles} usa
+ * para las 7 columnas fijas del detalle, y el punto de reuso explícito para
+ * Task 2: la tabla de motivos (nota de débito), la de detalle de
+ * destinatario (guía de remisión) y la de documentos sustento (retención)
+ * tienen columnas completamente distintas al detalle — arman su propio
+ * `ColumnaTabla[]`/`string[][]` con {@link construirColumnas} y llaman a
+ * esta función en vez de reimplementar bordes/paginación por cada tipo.
  */
-export function drawTablaDetalles(doc: PDFKit.PDFDocument, detalles: Detalle[], area: AreaRide): number {
-  const columnas = construirColumnasDetalle(area.width);
+export function drawTablaGenerica(
+  doc: PDFKit.PDFDocument,
+  columnas: ColumnaTabla[],
+  filas: string[][],
+  area: AreaRide,
+): number {
   const encabezados = columnas.map((c) => c.header);
-
   let y = area.y;
-  y = dibujarFilaDetalle(doc, columnas, encabezados, area.x, y, true);
+  y = dibujarFilaTabla(doc, columnas, encabezados, area.x, y, true);
 
-  for (const detalle of detalles) {
-    const celdas = celdasDetalle(detalle);
+  for (const fila of filas) {
     doc.font(FUENTE_NORMAL).fontSize(TAMANO_TABLA);
-    const alto = alturaFila(doc, columnas, celdas);
+    const alto = alturaFilaTabla(doc, columnas, fila);
 
     const paginasAntes = doc.bufferedPageRange().count;
     y = asegurarEspacio(doc, y, alto);
     if (doc.bufferedPageRange().count > paginasAntes) {
       // asegurarEspacio saltó de página: redibuja el encabezado antes de la fila.
-      y = dibujarFilaDetalle(doc, columnas, encabezados, area.x, y, true);
+      y = dibujarFilaTabla(doc, columnas, encabezados, area.x, y, true);
     }
 
-    y = dibujarFilaDetalle(doc, columnas, celdas, area.x, y, false);
+    y = dibujarFilaTabla(doc, columnas, fila, area.x, y, false);
   }
 
   return y;
+}
+
+/**
+ * Tabla de detalle: código principal, código auxiliar, cantidad,
+ * descripción (con los `detallesAdicionales` como líneas extra bajo la
+ * descripción), precio unitario, descuento y precio total. Delgado sobre
+ * {@link drawTablaGenerica}: solo arma las 7 columnas fijas
+ * ({@link DETALLE_COLUMN_SPECS}) y mapea cada {@link Detalle} a sus celdas
+ * — el mecanismo de paginación vive en `drawTablaGenerica`, compartido con
+ * las demás tablas de Task 2.
+ */
+export function drawTablaDetalles(doc: PDFKit.PDFDocument, detalles: Detalle[], area: AreaRide): number {
+  const columnas = construirColumnas(area.width, DETALLE_COLUMN_SPECS);
+  const filas = detalles.map(celdasDetalle);
+  return drawTablaGenerica(doc, columnas, filas, area);
 }
 
 /** Agrupa los impuestos con `codigo` IVA por `codigoPorcentaje`, sumando `baseImponible` en centavos (nunca en float). */
@@ -562,6 +607,34 @@ export function drawInfoAdicional(
   doc.font(FUENTE_NORMAL).fontSize(TAMANO_TEXTO);
   for (const [clave, valor] of entradas) {
     doc.text(`${clave}: ${valor}`, x, y, { width });
+    y = doc.y + ESPACIO_LINEA;
+  }
+
+  return cerrarCaja(doc, area, y);
+}
+
+/**
+ * Bloque genérico: título en negrita + líneas de texto simple, en una caja
+ * con borde — mismo estilo visual que el resto de bloques (`drawEmisor`,
+ * `drawTotales`, etc., vía `iniciarCaja`/`cerrarCaja`). Punto de reuso
+ * explícito para Task 2: cada `*.ride.ts` arma sus propias líneas para los
+ * "extras por tipo" que no son bloques compartidos (comprobante que
+ * modifica + motivo en nota de crédito; transportista y datos de traslado
+ * en guía de remisión; período fiscal y total retenido en retención) sin
+ * reimplementar el patrón de caja con título + líneas por cada tipo.
+ */
+export function drawBloqueTexto(doc: PDFKit.PDFDocument, titulo: string, lineas: string[], area: AreaRide): number {
+  let y = iniciarCaja(area);
+  const x = area.x + PADDING_CAJA;
+  const width = area.width - PADDING_CAJA * 2;
+
+  doc.font(FUENTE_NEGRITA).fontSize(TAMANO_TITULO).fillColor(COLOR_TEXTO);
+  doc.text(titulo, x, y, { width });
+  y = doc.y + ESPACIO_LINEA;
+
+  doc.font(FUENTE_NORMAL).fontSize(TAMANO_TEXTO);
+  for (const linea of lineas) {
+    doc.text(linea, x, y, { width });
     y = doc.y + ESPACIO_LINEA;
   }
 

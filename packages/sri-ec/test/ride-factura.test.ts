@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { TipoComprobante } from '../src/catalogs/index.js';
-import type { Factura, NotaCredito } from '../src/documents/index.js';
+import type { Factura } from '../src/documents/index.js';
 import { generarClaveAcceso } from '../src/utils/clave-acceso.js';
 import { facturaFixture } from './documents.test.js';
 
@@ -235,17 +235,5 @@ describe('ride: factura', () => {
     const texto = await extraerTextoPdf(await finalizar());
     expect(texto).toContain('Total descuento');
     expect(texto).toContain('5.00');
-  });
-
-  it('los 5 comprobantes aún no implementados lanzan un SriError anunciando la próxima versión', async () => {
-    const { generarRide, SriError } = await cargarRide();
-
-    // Cast deliberado: solo se necesita que `.tipo` sea el discriminante correcto
-    // para ejercitar el despachador — `generarRide` lee `documento.tipo` y lanza
-    // antes de tocar cualquier otro campo del documento.
-    const notaCredito = { ...facturaFixture, tipo: TipoComprobante.NotaCredito } as unknown as NotaCredito;
-
-    await expect(generarRide({ documento: notaCredito, claveAcceso })).rejects.toThrow(SriError);
-    await expect(generarRide({ documento: notaCredito, claveAcceso })).rejects.toThrow(/próxima versión/);
   });
 });
