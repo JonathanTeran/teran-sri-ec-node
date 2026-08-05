@@ -376,7 +376,7 @@ Como consecuencia, `SriModule.forRoot()` carga el certificado **al evaluar la de
 
 El RIDE (Representación Impresa del Documento Electrónico) es el PDF legible — con el mismo contenido tributario del XML más un código QR — que se entrega junto al comprobante. Vive en un **subpath aparte**, `sri-ec/ride`: el core de `sri-ec` no lo importa nunca, así que quien solo emite/firma comprobantes no paga el costo de sus dependencias.
 
-`pdfkit` (dibujo del PDF) y `qrcode` (el código QR) son **dependencias opcionales** (`optionalDependencies` + `peerDependenciesMeta` opcional) — instálalas solo si vas a generar el RIDE:
+`pdfkit` (dibujo del PDF) y `qrcode` (el código QR) son **dependencias opcionales** (`peerDependencies` + `peerDependenciesMeta` opcional — deliberadamente **no** `optionalDependencies`, que npm sí instala por defecto) — instálalas solo si vas a generar el RIDE:
 
 ```bash
 npm install pdfkit qrcode
