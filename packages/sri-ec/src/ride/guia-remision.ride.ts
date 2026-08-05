@@ -1,7 +1,5 @@
 import { TipoEmision } from '../catalogs/index.js';
 import type { Destinatario, DestinatarioDetalle, GuiaRemision } from '../documents/index.js';
-// Desde `'sri-ec'` (no `'../utils/money.js'`), ver la nota en `blocks.ts`.
-import { formatMonto } from 'sri-ec';
 import {
   asegurarEspacio,
   construirColumnas,
@@ -12,6 +10,7 @@ import {
   drawEmisor,
   drawInfoAdicional,
   drawTablaGenerica,
+  formatCantidadPrecision,
   formatNumeroComprobante,
   medirBloqueTexto,
   medirComprador,
@@ -41,28 +40,55 @@ const DESTINATARIO_DETALLE_COLUMN_SPECS: Array<[string, number, 'left' | 'right'
   ['Cantidad', 0.14, 'right'],
 ];
 
-/** Celdas de una fila de detalle de destinatario, en el mismo orden que {@link DESTINATARIO_DETALLE_COLUMN_SPECS}. */
+/**
+ * Celdas de una fila de detalle de destinatario, en el mismo orden que
+ * {@link DESTINATARIO_DETALLE_COLUMN_SPECS}. `cantidad` usa
+ * {@link formatCantidadPrecision} (hasta 6 decimales, sin redondear) — no
+ * `formatMonto(d.cantidad, 2)`, que REDONDEABA una cantidad a granel (p.ej.
+ * `0.001000`) a `0.00` (auditoría "campos fiscales omitidos", hallazgo 4).
+ */
 function celdasDestinatarioDetalle(d: DestinatarioDetalle): string[] {
   const extras = d.detallesAdicionales
     ? `\n${Object.entries(d.detallesAdicionales)
         .map(([k, v]) => `${k}: ${v}`)
         .join('\n')}`
     : '';
-  return [d.codigoInterno ?? '', d.codigoAdicional ?? '', `${d.descripcion}${extras}`, formatMonto(d.cantidad, 2)];
+  return [
+    d.codigoInterno ?? '',
+    d.codigoAdicional ?? '',
+    `${d.descripcion}${extras}`,
+    formatCantidadPrecision(d.cantidad),
+  ];
 }
 
 /**
  * Líneas del bloque "datos del traslado" de un destinatario: motivo
- * (obligatorio), documento sustento, documento aduanero único y ruta (los
- * últimos tres, si vienen).
+ * (obligatorio), documento sustento (+ su número de autorización, si viene),
+ * documento aduanero único, código de establecimiento destino y ruta (los
+ * últimos cuatro, si vienen).
+ *
+ * `numAutDocSustento`/`codEstabDestino` (auditoría "campos fiscales
+ * omitidos", hallazgo 8): antes ningún `*.ride.ts` los leía, aunque
+ * `Destinatario` los modela — el número de autorización del documento
+ * sustento (parte del layout RIDE del SRI para guía de remisión) y el
+ * establecimiento que recibe el traslado se perdían en silencio.
  */
 function lineasTraslado(destinatario: Destinatario): string[] {
   const lineas = [`Motivo del Traslado: ${destinatario.motivoTraslado}`];
   if (destinatario.codDocSustento) {
-    lineas.push(`Documento Sustento: ${destinatario.codDocSustento} - ${destinatario.numDocSustento ?? ''}`);
+    // Evita un "- " colgante cuando `numDocSustento` no viene (el XSD lo
+    // declara opcional junto a `codDocSustento`).
+    const numero = destinatario.numDocSustento ? ` - ${destinatario.numDocSustento}` : '';
+    lineas.push(`Documento Sustento: ${destinatario.codDocSustento}${numero}`);
+  }
+  if (destinatario.numAutDocSustento) {
+    lineas.push(`Número de Autorización del Documento Sustento: ${destinatario.numAutDocSustento}`);
   }
   if (destinatario.docAduaneroUnico) {
     lineas.push(`Documento Aduanero Único: ${destinatario.docAduaneroUnico}`);
+  }
+  if (destinatario.codEstabDestino) {
+    lineas.push(`Código de Establecimiento Destino: ${destinatario.codEstabDestino}`);
   }
   if (destinatario.ruta) {
     lineas.push(`Ruta: ${destinatario.ruta}`);
@@ -109,6 +135,7 @@ export async function generarRideGuiaRemision(opciones: RideOptions<GuiaRemision
     contribuyenteEspecial: documento.contribuyenteEspecial,
     agenteRetencion: documento.infoTributaria.agenteRetencion,
     contribuyenteRimpe: documento.infoTributaria.contribuyenteRimpe,
+    rise: documento.rise,
   };
   const comprobante: ComprobanteRide = {
     ruc: documento.infoTributaria.ruc,

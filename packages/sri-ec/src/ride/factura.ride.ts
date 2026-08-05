@@ -93,6 +93,7 @@ export async function generarRideFactura(opciones: RideOptions<Factura>): Promis
   const comprador: CompradorRide = {
     razonSocial: documento.razonSocialComprador,
     identificacion: documento.identificacionComprador,
+    tipoIdentificacion: documento.tipoIdentificacionComprador,
     fechaEmision: documento.fechaEmision,
     direccion: documento.direccionComprador,
     guiaRemision: documento.guiaRemision,
@@ -113,6 +114,7 @@ export async function generarRideFactura(opciones: RideOptions<Factura>): Promis
     totalDescuento: documento.totalDescuento,
     propina: documento.propina,
     importeTotal: documento.importeTotal,
+    moneda: documento.moneda,
   };
 
   y =

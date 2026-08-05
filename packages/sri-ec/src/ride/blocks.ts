@@ -44,6 +44,23 @@ const ESPACIO_LINEA = 2;
 const CODIGO_IMPUESTO_IVA = '2';
 /** Código de impuesto para ICE. */
 const CODIGO_IMPUESTO_ICE = '3';
+/** Código de impuesto para IRBPNR (Impuesto Redimible a las Botellas Plásticas No Retornables). */
+const CODIGO_IMPUESTO_IRBPNR = '5';
+
+/**
+ * Etiqueta por `codigo` de impuesto (campo `codigo` de {@link TotalImpuesto},
+ * catálogo SRI "Código de impuesto" — NO confundir con `codigoPorcentaje`,
+ * que es la tarifa dentro de un mismo impuesto). Solo cubre los códigos que
+ * IVA/ICE no imprimen con su propia línea fija en {@link lineasTotales}
+ * (auditoría "campos fiscales omitidos", hallazgo 3: un `totalConImpuestos`
+ * con un código que no fuera IVA/ICE —p.ej. IRBPNR— se descartaba entero sin
+ * dejar rastro, así que el lector no podía reconciliar `importeTotal`). Un
+ * código sin entrada aquí NUNCA se descarta: se imprime con una etiqueta
+ * genérica que incluye el código crudo.
+ */
+const LABEL_IMPUESTO: Record<string, string> = {
+  [CODIGO_IMPUESTO_IRBPNR]: 'IRBPNR',
+};
 
 /**
  * Etiqueta de tarifa por `codigoPorcentaje` (catálogo SRI "Código Porcentaje").
@@ -102,6 +119,60 @@ export function nombreDocumento(tipo: TipoComprobante): string {
   }
 }
 
+/**
+ * Nombre legible en Sentence case por `codDoc` CRUDO (`string`, no
+ * `TipoComprobante`) — para el bloque "Comprobante que Modifica" de nota de
+ * crédito y nota de débito (`codDocModificado`), donde el código viene tal
+ * cual del documento y podría en teoría no ser uno de los 6 códigos válidos,
+ * así que no se puede reusar {@link nombreDocumento} (que exige un
+ * `TipoComprobante` y no tiene rama `default`: lanzaría en tiempo de
+ * ejecución ante un código desconocido). Con fallback al código crudo — nunca
+ * se descarta la línea por no reconocer el código.
+ *
+ * Compartido entre `nota-credito.ride.ts` y `nota-debito.ride.ts` (auditoría
+ * "campos fiscales omitidos", hallazgo 2: antes solo existía dentro de
+ * `nota-credito.ride.ts`, así que nota de débito no tenía de dónde tomarlo
+ * para su propio bloque "Comprobante que Modifica").
+ */
+export function nombreDocumentoPorCodigo(codDoc: string): string {
+  return NOMBRE_POR_COD_DOC[codDoc] ?? codDoc;
+}
+
+const NOMBRE_POR_COD_DOC: Record<string, string> = {
+  [TipoComprobante.Factura]: 'Factura',
+  [TipoComprobante.LiquidacionCompra]: 'Liquidación de Compra',
+  [TipoComprobante.NotaCredito]: 'Nota de Crédito',
+  [TipoComprobante.NotaDebito]: 'Nota de Débito',
+  [TipoComprobante.GuiaRemision]: 'Guía de Remisión',
+  [TipoComprobante.Retencion]: 'Comprobante de Retención',
+};
+
+/**
+ * Etiqueta legible por código del catálogo SRI "Tipos de Identificación"
+ * (`04` RUC, `05` Cédula, `06` Pasaporte, `07` Consumidor Final, `08`
+ * Identificación del Exterior) — se imprime junto al número de
+ * identificación en `drawComprador` cuando `CompradorRide.tipoIdentificacion`
+ * viene. Con fallback al código crudo, igual que {@link LABEL_FORMA_PAGO}.
+ */
+const LABEL_TIPO_IDENTIFICACION: Record<string, string> = {
+  '04': 'RUC',
+  '05': 'Cédula de Identidad',
+  '06': 'Pasaporte',
+  '07': 'Consumidor Final',
+  '08': 'Identificación del Exterior',
+};
+
+/**
+ * Etiqueta legible por código de forma de pago (catálogo SRI "Formas de
+ * Pago"). Punto de reuso explícito para `retencion.ride.ts`
+ * (`DocSustento.pagos[].formaPago`, shape `PagoSustentoRow` — distinto del
+ * `Pago` compartido, pero mismo catálogo de códigos) sin duplicar
+ * {@link LABEL_FORMA_PAGO}.
+ */
+export function formaPagoLabel(codigo: string): string {
+  return LABEL_FORMA_PAGO[codigo] ?? codigo;
+}
+
 /** `estab-ptoEmi-secuencial`, p.ej. `001-001-000000001` — el número de comprobante que exige el SRI en el RIDE. */
 export function formatNumeroComprobante(info: Pick<InfoTributaria, 'estab' | 'ptoEmi' | 'secuencial'>): string {
   return `${info.estab}-${info.ptoEmi}-${info.secuencial}`;
@@ -134,6 +205,18 @@ function limiteInferior(doc: PDFKit.PDFDocument): number {
 /** Alto útil de una página (entre el margen superior y el inferior). */
 function alturaUtilPagina(doc: PDFKit.PDFDocument): number {
   return doc.page.height - doc.page.margins.top - doc.page.margins.bottom;
+}
+
+/**
+ * `true` si `v` tiene contenido real (no `undefined`, no vacío, no solo
+ * espacios). Guarda contra imprimir una etiqueta sin su valor —`Razón
+ * Social / Nombres:` sola, un `:` suelto en INFORMACIÓN ADICIONAL— que la
+ * auditoría "campos fiscales omitidos" señaló como peor que omitir la línea
+ * entera: parece un dato faltante del documento en vez de uno ausente en la
+ * fuente.
+ */
+function noVacio(v: string | undefined): v is string {
+  return v !== undefined && v.trim() !== '';
 }
 
 /**
@@ -468,6 +551,9 @@ function lineasEmisor(emisor: EmisorRide): LineaCaja[] {
   if (emisor.contribuyenteRimpe) {
     lineas.push({ texto: `Contribuyente RIMPE: ${emisor.contribuyenteRimpe}` });
   }
+  if (emisor.rise) {
+    lineas.push({ texto: `RISE: ${emisor.rise}` });
+  }
   return lineas;
 }
 
@@ -600,12 +686,29 @@ function tituloComprador(comprador: CompradorRide): string {
 
 /** Líneas del bloque comprador, en el orden en que se imprimen. */
 function lineasComprador(comprador: CompradorRide): LineaCaja[] {
-  const lineas: LineaCaja[] = [
-    { texto: tituloComprador(comprador), negrita: true, tamano: TAMANO_TITULO },
-    { texto: `Razón Social / Nombres: ${comprador.razonSocial}` },
-    { texto: `Identificación: ${comprador.identificacion}` },
-    { texto: `Fecha Emisión: ${comprador.fechaEmision}` },
-  ];
+  const lineas: LineaCaja[] = [{ texto: tituloComprador(comprador), negrita: true, tamano: TAMANO_TITULO }];
+
+  // Campos "obligatorios" del value object, pero blindados contra un string
+  // vacío en tiempo de ejecución (auditoría "campos fiscales omitidos": una
+  // etiqueta sin su valor —`Razón Social / Nombres:` sola— es peor que no
+  // imprimir la línea, porque parece un dato faltante del EMISOR en vez de
+  // uno ausente en la fuente).
+  if (noVacio(comprador.razonSocial)) {
+    lineas.push({ texto: `Razón Social / Nombres: ${comprador.razonSocial}` });
+  }
+  if (noVacio(comprador.identificacion)) {
+    // `tipoIdentificacion` (catálogo SRI "Tipos de Identificación") junto al
+    // número: antes se leía en ningún `*.ride.ts` (hallazgo "ALSO" de la
+    // auditoría) aunque los 4 documentos que modelan un
+    // `tipoIdentificacionComprador`/`Proveedor`/`SujetoRetenido` lo traen.
+    const tipo = comprador.tipoIdentificacion
+      ? ` (${LABEL_TIPO_IDENTIFICACION[comprador.tipoIdentificacion] ?? comprador.tipoIdentificacion})`
+      : '';
+    lineas.push({ texto: `Identificación: ${comprador.identificacion}${tipo}` });
+  }
+  if (noVacio(comprador.fechaEmision)) {
+    lineas.push({ texto: `Fecha Emisión: ${comprador.fechaEmision}` });
+  }
   if (comprador.direccion) {
     lineas.push({ texto: `Dirección: ${comprador.direccion}` });
   }
@@ -666,6 +769,35 @@ const DETALLE_COLUMN_SPECS: Array<[string, number, 'left' | 'right']> = [
   ['P. Total', 0.13, 'right'],
 ];
 
+/**
+ * Formatea `cantidad`/`precioUnitario` a la precisión que el dato
+ * realmente trae (hasta 6 decimales — la escala SRI para estos dos campos,
+ * ver `isMonto`/`Money.php`), recortando ceros de cola sobrantes hasta un
+ * mínimo de 2 decimales.
+ *
+ * Auditoría "campos fiscales omitidos" (hallazgo 4): `celdasDetalle` (y
+ * `celdasDestinatarioDetalle` en `guia-remision.ride.ts`) formateaban estas
+ * dos columnas con `formatMonto(valor, 2)` — que REDONDEA a 2 decimales, no
+ * solo los muestra. Un `precioUnitario` de `0.004500` (frecuente en
+ * combustibles, agrícolas o metales preciosos vendidos a granel) se
+ * imprimía como `0.00`: la fila quedaba aritméticamente imposible
+ * (`cantidad × precioUnitario ≠ precioTotalSinImpuesto` a ojo del lector).
+ * A diferencia de `formatMonto`, esto NUNCA redondea — solo recorta dígitos
+ * que no aportan información — y por eso preserva el valor exacto sin
+ * importar cuántos decimales traiga el dato de entrada.
+ *
+ * El mínimo de 2 decimales es deliberado (no se recorta hasta quedar un
+ * entero pelado): `100.000000` imprime `100.00`, no `100`, por consistencia
+ * con el resto de columnas monetarias del RIDE (todas a 2 decimales cuando
+ * el valor es un entero exacto).
+ */
+export function formatCantidadPrecision(valor: string): string {
+  const normalizado = formatMonto(valor, 6);
+  const [intPart, fracPart] = normalizado.split('.');
+  const fracRecortada = (fracPart ?? '').replace(/0+$/, '');
+  return `${intPart}.${fracRecortada.length < 2 ? fracRecortada.padEnd(2, '0') : fracRecortada}`;
+}
+
 /** Celdas de una fila de detalle, en el mismo orden que {@link DETALLE_COLUMN_SPECS}. */
 function celdasDetalle(d: Detalle): string[] {
   const extras = d.detallesAdicionales
@@ -676,9 +808,9 @@ function celdasDetalle(d: Detalle): string[] {
   return [
     d.codigoPrincipal ?? '',
     d.codigoAuxiliar ?? '',
-    formatMonto(d.cantidad, 2),
+    formatCantidadPrecision(d.cantidad),
     `${d.descripcion}${extras}`,
-    formatMonto(d.precioUnitario, 2),
+    formatCantidadPrecision(d.precioUnitario),
     formatMonto(d.descuento, 2),
     formatMonto(d.precioTotalSinImpuesto, 2),
   ];
@@ -876,17 +1008,39 @@ function subtotalesIva(impuestos: TotalImpuesto[]): Array<{ etiqueta: string; ba
   }));
 }
 
-/** Suma en centavos el `valor` de los impuestos que coinciden con `codigo` (p.ej. ICE o IVA). */
-function sumarValorPorCodigo(impuestos: TotalImpuesto[], codigo: string): number {
-  return impuestos.filter((imp) => imp.codigo === codigo).reduce((acc, imp) => acc + toCents(imp.valor), 0);
+/**
+ * Suma en centavos el `valor` de todos los impuestos, agrupado por `codigo`
+ * — nunca aritmética de punto flotante — en el orden de primera aparición
+ * (`Map` conserva orden de inserción). Antes de la auditoría "campos
+ * fiscales omitidos" (hallazgo 3) esto era `sumarValorPorCodigo(impuestos,
+ * codigo)`, llamado solo para ICE e IVA: cualquier otro código presente en
+ * `totalConImpuestos` (p.ej. IRBPNR, código `5`) no se sumaba a NINGÚN lado,
+ * así que ni aparecía en su propia línea ni se le podía reclamar a
+ * `sumarValorPorCodigo` — se perdía en silencio y el lector no podía
+ * reconciliar la suma de líneas contra `importeTotal`. Agrupar TODOS los
+ * códigos de una pasada es lo que permite que {@link lineasTotales} imprima
+ * una línea por cada código presente sin tener que enumerar de antemano
+ * cuáles existen.
+ */
+function agruparValorPorCodigo(impuestos: TotalImpuesto[]): Map<string, number> {
+  const grupos = new Map<string, number>();
+  for (const imp of impuestos) {
+    grupos.set(imp.codigo, (grupos.get(imp.codigo) ?? 0) + toCents(imp.valor));
+  }
+  return grupos;
 }
 
 /**
  * Bloque totales: subtotales por tarifa de IVA, subtotal sin impuestos,
  * total descuento (si viene — `NotaCredito`/`NotaDebito` no lo modelan),
- * ICE (si aplica), IVA, propina (si viene) y valor total. Toda la suma de
- * impuestos usa `toCents`/`fromCents` — nunca aritmética de punto flotante
- * sobre los montos.
+ * moneda (si viene), ICE (si aplica), IVA, cualquier otro impuesto presente
+ * en `totales.impuestos` (IRBPNR y cualquier código no catalogado — nunca se
+ * descarta uno por no tener etiqueta conocida), propina (si viene) y valor
+ * total. Toda la suma de impuestos usa `toCents`/`fromCents` — nunca
+ * aritmética de punto flotante sobre los montos. Las líneas impresas SIEMPRE
+ * reconcilian contra `importeTotal` (hallazgo 3 de la auditoría "campos
+ * fiscales omitidos": antes, un impuesto con un código que no fuera IVA/ICE
+ * se perdía entero y esa reconciliación era imposible).
  */
 export function drawTotales(doc: PDFKit.PDFDocument, totales: TotalesRide, area: AreaRide): number {
   return dibujarCaja(doc, area, lineasTotales(totales), { titulo: TITULO_TOTALES });
@@ -908,16 +1062,35 @@ function lineasTotales(totales: TotalesRide): LineaCaja[] {
     lineas.push({ texto: 'Total descuento', valor: formatMonto(totales.totalDescuento, 2) });
   }
 
-  const ice = sumarValorPorCodigo(totales.impuestos, CODIGO_IMPUESTO_ICE);
-  if (ice > 0) {
+  const grupos = agruparValorPorCodigo(totales.impuestos);
+
+  // ICE: línea opcional, solo si el código está presente en `impuestos`
+  // (antes era "solo si la suma es > 0" — un ICE de '0.00' explícito en el
+  // documento ahora también se imprime, en vez de desaparecer).
+  const ice = grupos.get(CODIGO_IMPUESTO_ICE);
+  if (ice !== undefined) {
     lineas.push({ texto: 'ICE', valor: fromCents(ice) });
   }
 
-  const iva = sumarValorPorCodigo(totales.impuestos, CODIGO_IMPUESTO_IVA);
-  lineas.push({ texto: 'IVA', valor: fromCents(iva) });
+  // IVA: línea fija del layout SRI — se imprime siempre, en 0.00 si el
+  // documento no trae ningún impuesto con este código.
+  lineas.push({ texto: 'IVA', valor: fromCents(grupos.get(CODIGO_IMPUESTO_IVA) ?? 0) });
+
+  // Cualquier otro código de impuesto presente (IRBPNR y cualquier código
+  // futuro no catalogado): se imprime SIEMPRE que esté presente, con su
+  // etiqueta conocida o, a falta de ella, una genérica que incluye el
+  // código crudo — nunca se descarta.
+  for (const [codigo, cents] of grupos) {
+    if (codigo === CODIGO_IMPUESTO_ICE || codigo === CODIGO_IMPUESTO_IVA) continue;
+    lineas.push({ texto: LABEL_IMPUESTO[codigo] ?? `Otro impuesto (código ${codigo})`, valor: fromCents(cents) });
+  }
 
   if (totales.propina) {
     lineas.push({ texto: 'Propina', valor: formatMonto(totales.propina, 2) });
+  }
+
+  if (noVacio(totales.moneda)) {
+    lineas.push({ texto: 'Moneda', valor: totales.moneda });
   }
 
   lineas.push({ texto: 'VALOR TOTAL', valor: formatMonto(totales.importeTotal, 2), negrita: true });
@@ -972,9 +1145,18 @@ export function drawInfoAdicional(
 
 const TITULO_INFO_ADICIONAL = 'INFORMACIÓN ADICIONAL';
 
-/** Líneas del bloque información adicional; vacío (sin ni siquiera el título) si no hay campos. */
+/**
+ * Líneas del bloque información adicional; vacío (sin ni siquiera el
+ * título) si no hay campos con contenido real. Descarta los campos con
+ * `valor` vacío/solo espacios ANTES de decidir si hay algo que dibujar —
+ * auditoría "campos fiscales omitidos": un `campoAdicional` con valor `''`
+ * imprimía `Clave:` sin nada después, un `:` suelto que parece un dato
+ * faltante del documento en vez de un campo vacío en la fuente.
+ */
 function lineasInfoAdicional(infoAdicional: Record<string, string> | undefined): LineaCaja[] {
-  const entradas = infoAdicional ? Object.entries(infoAdicional) : [];
+  const entradas = infoAdicional
+    ? Object.entries(infoAdicional).filter(([, valor]) => noVacio(valor))
+    : [];
   if (entradas.length === 0) {
     return [];
   }

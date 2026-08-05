@@ -92,6 +92,7 @@ export async function generarRideLiquidacionCompra(opciones: RideOptions<Liquida
     etiquetaSujeto: 'Proveedor',
     razonSocial: documento.razonSocialProveedor,
     identificacion: documento.identificacionProveedor,
+    tipoIdentificacion: documento.tipoIdentificacionProveedor,
     fechaEmision: documento.fechaEmision,
     direccion: documento.direccionProveedor,
   };
@@ -110,6 +111,7 @@ export async function generarRideLiquidacionCompra(opciones: RideOptions<Liquida
     totalSinImpuestos: documento.totalSinImpuestos,
     totalDescuento: documento.totalDescuento,
     importeTotal: documento.importeTotal,
+    moneda: documento.moneda,
   };
 
   y =

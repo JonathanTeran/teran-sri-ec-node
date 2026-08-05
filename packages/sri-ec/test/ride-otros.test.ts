@@ -203,6 +203,35 @@ describe('ride: nota de débito', () => {
     expect(texto).toContain('TOTALES');
     expect(texto).toContain(notaDebitoFixture.valorTotal);
   });
+
+  /**
+   * Auditoría "campos fiscales omitidos", hallazgo 2 (CRÍTICO):
+   * `codDocModificado`/`numDocModificado`/`fechaEmisionDocSustento` (y
+   * `rise`) no se leían en ningún lado de `nota-debito.ride.ts` — el
+   * comprobante que la nota de débito modifica no aparecía en el PDF.
+   * Verificado con mutación: comentar la llamada a `drawBloqueTexto` del
+   * bloque "COMPROBANTE QUE MODIFICA" en `nota-debito.ride.ts` hace fallar
+   * este test (los 3 campos, en particular `numDocModificado`
+   * ('001-001-000000001') y `fechaEmisionDocSustento` ('01/08/2026'), dejan
+   * de aparecer — son justo los dos valores que la auditoría confirmó
+   * ausentes con `pdftotext`).
+   */
+  it('imprime el comprobante que modifica (codDocModificado/numDocModificado/fechaEmisionDocSustento) y el RISE del emisor (hallazgo 2, CRÍTICO)', async () => {
+    const pdf = await generarRide({
+      documento: notaDebitoFixture,
+      claveAcceso: claveNotaDebito,
+      autorizacion: { numero: claveNotaDebito, fecha: '03/08/2026 10:00:00' },
+    });
+    const texto = await extraerTextoPdf(pdf);
+
+    expect(texto).toContain('COMPROBANTE QUE MODIFICA');
+    expect(texto).toContain(`Tipo de Comprobante Modificado: ${notaDebitoFixture.codDocModificado} - Factura`);
+    expect(texto).toContain(notaDebitoFixture.numDocModificado);
+    expect(texto).toContain(notaDebitoFixture.fechaEmisionDocSustento);
+    // `rise` del emisor (hallazgo 2 también lo señala como omitido).
+    expect(texto).toContain('RISE');
+    expect(texto).toContain(notaDebitoFixture.rise as string);
+  });
 });
 
 describe('ride: guía de remisión', () => {
@@ -264,6 +293,30 @@ describe('ride: guía de remisión', () => {
     expect(texto).toContain('Documento Aduanero Único: DAU-2026-000123');
     expect(texto).toContain('Ruta: Quito - Guayaquil vía E35');
   });
+
+  /**
+   * Auditoría "campos fiscales omitidos", hallazgo 8: `numAutDocSustento`
+   * (ya presente en `guiaRemisionFixture.destinatarios[0]`) y
+   * `codEstabDestino` no se leían en `guia-remision.ride.ts`. Verificado con
+   * mutación: comentar las dos ramas `if` que las imprimen en
+   * `lineasTraslado` hace fallar este test.
+   */
+  it('renderiza numAutDocSustento y codEstabDestino cuando el destinatario los trae (hallazgo 8)', async () => {
+    const guiaConEstabDestino: GuiaRemision = {
+      ...guiaRemisionFixture,
+      destinatarios: [
+        { ...guiaRemisionFixture.destinatarios[0], codEstabDestino: '002' },
+      ],
+    };
+
+    const pdf = await generarRide({ documento: guiaConEstabDestino, claveAcceso: claveGuiaRemision });
+    const texto = await extraerTextoPdf(pdf);
+
+    expect(texto).toContain(
+      `Número de Autorización del Documento Sustento: ${guiaRemisionFixture.destinatarios[0].numAutDocSustento}`,
+    );
+    expect(texto).toContain('Código de Establecimiento Destino: 002');
+  });
 });
 
 describe('ride: retención', () => {
@@ -309,6 +362,79 @@ describe('ride: retención', () => {
     // pdfjs con un espacio) lo habría mostrado como "Comprobant e").
     expect(texto).toContain('Comprobante');
     expect(texto).toContain('Fecha Emisión');
+  });
+
+  /**
+   * Auditoría "campos fiscales omitidos", hallazgo 7 (MEDIO):
+   * `filasDocsSustento` solo emitía filas desde el bucle interior sobre
+   * `retenciones[]` — un `docSustento` con `retenciones: []` no generaba
+   * ninguna fila EN LA TABLA, así que su `numDocSustento` no aparecía en la
+   * tabla de documentos sustento (solo en el bloque "Detalle de Documentos
+   * Sustento" del hallazgo 9, que es independiente y también lo imprime).
+   * Por eso este test CUENTA ocurrencias del número en vez de usar
+   * `toContain`: con el fix, aparece 2 veces (fila placeholder de la tabla +
+   * bloque de detalle); sin él, solo 1 (el bloque de detalle solo). Sin
+   * contar así, este test pasaría igual aunque `filasDocsSustento` volviera
+   * a perder la fila — confirmado con la mutación de abajo.
+   *
+   * Verificado con mutación: quitar la rama `if
+   * (docSustento.retenciones.length === 0)` de `filasDocsSustento` hace
+   * fallar este test (pasa de 2 ocurrencias a 1).
+   */
+  it('un docSustento con retenciones vacío sigue generando su propia fila en la tabla de documentos sustento (hallazgo 7)', async () => {
+    const retencionConDocVacio: Retencion = {
+      ...retencionFixture,
+      docsSustento: [
+        ...retencionFixture.docsSustento,
+        {
+          codSustento: '01',
+          codDocSustento: '01',
+          numDocSustento: '001-001-000000200',
+          fechaEmisionDocSustento: '02/08/2026',
+          totalSinImpuestos: '500.00',
+          importeTotal: '500.00',
+          impuestosDocSustento: [],
+          retenciones: [],
+          pagos: [],
+        },
+      ],
+    };
+
+    const pdf = await generarRide({ documento: retencionConDocVacio, claveAcceso: claveRetencion });
+    const texto = await extraerTextoPdf(pdf);
+
+    const ocurrencias = texto.split('001-001-000000200').length - 1;
+    // 1 en la tabla de documentos sustento (fila placeholder) + 1 en el
+    // bloque "Detalle de Documentos Sustento" (hallazgo 9) = 2.
+    expect(ocurrencias).toBe(2);
+  });
+
+  /**
+   * Auditoría "campos fiscales omitidos", hallazgo 9 (MEDIO):
+   * `importeTotal`, `codSustento`, `impuestosDocSustento[]` y `pagos[]` de
+   * cada `docSustento` no se leían en ningún lado de `retencion.ride.ts` —
+   * los valores de `retencionFixture` (`1120.00`, `120.00`, `1020.00` y
+   * `factorProporcionalidad: '1.00'`) nunca aparecían en el PDF. Verificado
+   * con mutación: comentar la llamada a `drawBloqueTexto` del bloque
+   * "DETALLE DE DOCUMENTOS SUSTENTO" en `retencion.ride.ts` hace fallar este
+   * test.
+   */
+  it('imprime importeTotal, codSustento, impuestosDocSustento[] y pagos[] de cada docSustento (hallazgo 9)', async () => {
+    const pdf = await generarRide({ documento: retencionFixture, claveAcceso: claveRetencion });
+    const texto = await extraerTextoPdf(pdf);
+    const docSustento = retencionFixture.docsSustento[0];
+    const impuesto = docSustento.impuestosDocSustento[0];
+    const pago = docSustento.pagos[0];
+
+    expect(texto).toContain('DETALLE DE DOCUMENTOS SUSTENTO');
+    expect(texto).toContain(`Código de Sustento: ${docSustento.codSustento}`);
+    expect(texto).toContain(`Importe Total: ${docSustento.importeTotal}`);
+    expect(docSustento.importeTotal).toBe('1120.00');
+    expect(texto).toContain(impuesto.valorImpuesto);
+    expect(impuesto.valorImpuesto).toBe('120.00');
+    expect(texto).toContain(`factor de proporcionalidad ${impuesto.factorProporcionalidad}`);
+    expect(pago.total).toBe('1020.00');
+    expect(texto).toContain(pago.total);
   });
 });
 

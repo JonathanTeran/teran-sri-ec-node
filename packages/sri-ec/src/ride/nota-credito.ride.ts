@@ -1,4 +1,4 @@
-import { TipoComprobante, TipoEmision } from '../catalogs/index.js';
+import { TipoEmision } from '../catalogs/index.js';
 import type { NotaCredito } from '../documents/index.js';
 import {
   asegurarEspacio,
@@ -18,6 +18,7 @@ import {
   medirInfoAdicional,
   medirTotales,
   nombreDocumento,
+  nombreDocumentoPorCodigo,
 } from './blocks.js';
 import { crearDocumentoRide } from './pdf-doc.js';
 import { generarQr } from './qr.js';
@@ -29,25 +30,12 @@ const ESPACIADO_BLOQUE = 10;
 const PROPORCION_EMISOR = 0.55;
 
 /**
- * Nombre legible por `codDoc`, para el bloque "Comprobante que Modifica".
- * `codDocModificado` se modela como `string` suelto (no `TipoComprobante`)
- * en `NotaCredito` — puede en teoría traer un código que el catálogo no
- * reconozca — así que se resuelve con un mapa + fallback al código crudo,
- * en vez de reusar `nombreDocumento()` de `blocks.ts` (que asume un
- * `TipoComprobante` válido, sin rama `default`, y lanzaría en tiempo de
- * ejecución ante un código desconocido).
+ * Título del bloque propio de la nota de crédito. El nombre legible de
+ * `codDocModificado` se resuelve con `nombreDocumentoPorCodigo()` de
+ * `blocks.ts` (compartido con `nota-debito.ride.ts` — ver ese archivo para
+ * el porqué de no reusar `nombreDocumento()`).
  */
-/** Título del bloque propio de la nota de crédito. */
 const TITULO_MODIFICA = 'COMPROBANTE QUE MODIFICA';
-
-const NOMBRE_POR_COD_DOC: Record<string, string> = {
-  [TipoComprobante.Factura]: 'Factura',
-  [TipoComprobante.LiquidacionCompra]: 'Liquidación de Compra',
-  [TipoComprobante.NotaCredito]: 'Nota de Crédito',
-  [TipoComprobante.NotaDebito]: 'Nota de Débito',
-  [TipoComprobante.GuiaRemision]: 'Guía de Remisión',
-  [TipoComprobante.Retencion]: 'Comprobante de Retención',
-};
 
 /**
  * RIDE de Nota de Crédito (codDoc `04`). A diferencia de Factura, no tiene
@@ -85,6 +73,7 @@ export async function generarRideNotaCredito(opciones: RideOptions<NotaCredito>)
     contribuyenteEspecial: documento.contribuyenteEspecial,
     agenteRetencion: documento.infoTributaria.agenteRetencion,
     contribuyenteRimpe: documento.infoTributaria.contribuyenteRimpe,
+    rise: documento.rise,
   };
   const comprobante: ComprobanteRide = {
     ruc: documento.infoTributaria.ruc,
@@ -111,13 +100,14 @@ export async function generarRideNotaCredito(opciones: RideOptions<NotaCredito>)
   const comprador: CompradorRide = {
     razonSocial: documento.razonSocialComprador,
     identificacion: documento.identificacionComprador,
+    tipoIdentificacion: documento.tipoIdentificacionComprador,
     fechaEmision: documento.fechaEmision,
   };
   y = asegurarEspacio(doc, y, medirComprador(doc, comprador, anchoUtil));
   y = drawComprador(doc, comprador, { x: margenX, y, width: anchoUtil }) + ESPACIADO_BLOQUE;
 
   // Comprobante que modifica + motivo.
-  const nombreModificado = NOMBRE_POR_COD_DOC[documento.codDocModificado] ?? documento.codDocModificado;
+  const nombreModificado = nombreDocumentoPorCodigo(documento.codDocModificado);
   const lineasModifica = [
     `Tipo de Comprobante Modificado: ${documento.codDocModificado} - ${nombreModificado}`,
     `Número de Comprobante Modificado: ${documento.numDocModificado}`,
@@ -136,6 +126,7 @@ export async function generarRideNotaCredito(opciones: RideOptions<NotaCredito>)
     impuestos: documento.totalConImpuestos,
     totalSinImpuestos: documento.totalSinImpuestos,
     importeTotal: documento.valorModificacion,
+    moneda: documento.moneda,
   };
   y = asegurarEspacio(doc, y, medirTotales(doc, totales, anchoUtil));
   y = drawTotales(doc, totales, { x: margenX, y, width: anchoUtil }) + ESPACIADO_BLOQUE;

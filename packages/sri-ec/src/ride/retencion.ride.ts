@@ -12,6 +12,7 @@ import {
   drawEmisor,
   drawInfoAdicional,
   drawTablaGenerica,
+  formaPagoLabel,
   formatNumeroComprobante,
   medirBloqueTexto,
   medirComprador,
@@ -88,10 +89,31 @@ const LABEL_IMPUESTO_RETENCION: Record<string, string> = {
  * el mapa); "Código" muestra el código de retención tal cual
  * (`codigoRetencion`) — son dos catálogos SRI distintos, cada uno en su
  * propia columna.
+ *
+ * Un `docSustento` con `retenciones: []` (nada retenido sobre ese
+ * comprobante sustento en particular, pero el documento sí lo referencia)
+ * emite una fila placeholder con solo sus 3 columnas identificadoras —
+ * auditoría "campos fiscales omitidos", hallazgo 7: antes, sin ninguna
+ * `retencion` de donde generar una fila, el `docSustento` entero
+ * desaparecía del PDF; su `numDocSustento` no aparecía en ningún lado aunque
+ * el documento sí lo trajera.
  */
 function filasDocsSustento(docsSustento: DocSustento[]): string[][] {
   const filas: string[][] = [];
   for (const docSustento of docsSustento) {
+    if (docSustento.retenciones.length === 0) {
+      filas.push([
+        docSustento.codDocSustento,
+        docSustento.numDocSustento,
+        docSustento.fechaEmisionDocSustento,
+        '',
+        '',
+        '',
+        '',
+        '',
+      ]);
+      continue;
+    }
     for (const retencion of docSustento.retenciones) {
       filas.push([
         docSustento.codDocSustento,
@@ -119,16 +141,69 @@ function totalRetenido(docsSustento: DocSustento[]): string {
   return fromCents(cents);
 }
 
+/** Título del bloque "Detalle de Documentos Sustento" (ver {@link lineasDocumentosSustentoDetalle}). */
+const TITULO_DOC_SUSTENTO_DETALLE = 'DETALLE DE DOCUMENTOS SUSTENTO';
+
+/**
+ * Líneas del bloque "Detalle de Documentos Sustento": por cada `docSustento`,
+ * su código de sustento, sus totales y CADA fila de `impuestosDocSustento`/
+ * `pagos` — nada se resume ni se descarta.
+ *
+ * Auditoría "campos fiscales omitidos", hallazgo 9: `codSustento`,
+ * `importeTotal`, `impuestosDocSustento[]` y `pagos[]` no se leían en
+ * ningún lado de este archivo. El comentario original en el encabezado del
+ * módulo documentaba la omisión de `pagos` como una decisión de alcance
+ * ("no está en el listado de bloques obligatorios del plan") — pero deja de
+ * imprimir un dato real de un documento fiscal, sea por decisión de alcance
+ * o por descuido, y el efecto es el mismo: el lector no puede verificar esos
+ * valores contra el comprobante sustento original.
+ *
+ * Deliberadamente NO se fusiona con {@link filasDocsSustento} (la tabla de
+ * retenciones): esa tabla tiene sus fracciones de columna ya afinadas contra
+ * un hallazgo de wrapping de una revisión anterior (ver el comentario de
+ * `DOC_SUSTENTO_COLUMN_SPECS`) — reabrir ese cálculo para meter columnas
+ * nuevas arriesgaba reintroducir ese mismo bug. Este bloque es texto libre
+ * vía `drawBloqueTexto`/`medirBloqueTexto`, que ya saben paginar contenido
+ * arbitrariamente largo (incluida la marca "(continuación)").
+ */
+function lineasDocumentosSustentoDetalle(docsSustento: DocSustento[]): string[] {
+  const lineas: string[] = [];
+  for (const docSustento of docsSustento) {
+    lineas.push(
+      `Documento Sustento: ${docSustento.codDocSustento} - ${docSustento.numDocSustento}` +
+        ` (Código de Sustento: ${docSustento.codSustento})`,
+    );
+    lineas.push(`Total sin Impuestos: ${docSustento.totalSinImpuestos}`);
+    lineas.push(`Importe Total: ${docSustento.importeTotal}`);
+
+    for (const imp of docSustento.impuestosDocSustento) {
+      let linea =
+        `Impuesto: código ${imp.codImpuestoDocSustento}, % ${imp.codigoPorcentaje}, ` +
+        `base imponible ${imp.baseImponible}, tarifa ${imp.tarifa}%, valor ${imp.valorImpuesto}`;
+      if (imp.factorProporcionalidad) {
+        linea += `, factor de proporcionalidad ${imp.factorProporcionalidad}`;
+      }
+      if (imp.baseImponibleModificada) {
+        linea += `, base imponible modificada ${imp.baseImponibleModificada}`;
+      }
+      lineas.push(linea);
+    }
+
+    for (const pago of docSustento.pagos) {
+      lineas.push(`Pago: ${formaPagoLabel(pago.formaPago)} - ${pago.total}`);
+    }
+  }
+  return lineas;
+}
+
 /**
  * RIDE de Comprobante de Retención (codDoc `07`). Otro comprobante sin
  * `detalles`/`totalConImpuestos`/`pagos` a nivel documento: el cuerpo es la
- * tabla de `docsSustento`, aplanada a una fila por cada `retenciones[]`.
- * `DocSustento.pagos` (`PagoSustentoRow[]`, shape distinto al `Pago`
- * compartido) no se imprime — no está en el listado de bloques
- * obligatorios de retención del plan (periodo fiscal + tabla de documentos
- * sustento + total retenido), a diferencia de `docsSustento`. El "sujeto"
- * de `drawComprador` es el sujeto retenido
- * (`etiquetaSujeto: 'Sujeto Retenido'`).
+ * tabla de `docsSustento`, aplanada a una fila por cada `retenciones[]`, más
+ * el bloque "Detalle de Documentos Sustento" (`codSustento`, totales,
+ * `impuestosDocSustento[]` y `pagos[]` de cada `docSustento` — ver
+ * {@link lineasDocumentosSustentoDetalle}). El "sujeto" de `drawComprador`
+ * es el sujeto retenido (`etiquetaSujeto: 'Sujeto Retenido'`).
  */
 export async function generarRideRetencion(opciones: RideOptions<Retencion>): Promise<Uint8Array> {
   const { documento, claveAcceso, autorizacion, logo } = opciones;
@@ -183,16 +258,25 @@ export async function generarRideRetencion(opciones: RideOptions<Retencion>): Pr
     etiquetaSujeto: 'Sujeto Retenido',
     razonSocial: documento.razonSocialSujetoRetenido,
     identificacion: documento.identificacionSujetoRetenido,
+    tipoIdentificacion: documento.tipoIdentificacionSujetoRetenido,
     fechaEmision: documento.fechaEmision,
   };
   y = asegurarEspacio(doc, y, medirComprador(doc, sujetoRetenido, anchoUtil));
   y = drawComprador(doc, sujetoRetenido, { x: margenX, y, width: anchoUtil }) + ESPACIADO_BLOQUE;
 
-  // Período fiscal + total retenido.
+  // Período fiscal + total retenido + tipo de sujeto retenido/parte
+  // relacionada (si vienen — auditoría "campos fiscales omitidos": antes
+  // ningún `*.ride.ts` leía `tipoSujetoRetenido`/`parteRel`).
   const lineasRetencion = [
     `Período Fiscal: ${documento.periodoFiscal}`,
     `Total Retenido: ${totalRetenido(documento.docsSustento)}`,
   ];
+  if (documento.tipoSujetoRetenido) {
+    lineasRetencion.push(`Tipo de Sujeto Retenido: ${documento.tipoSujetoRetenido}`);
+  }
+  if (documento.parteRel) {
+    lineasRetencion.push(`Parte Relacionada: ${documento.parteRel}`);
+  }
   y = asegurarEspacio(doc, y, medirBloqueTexto(doc, TITULO_RETENCION, lineasRetencion, anchoUtil));
   y = drawBloqueTexto(doc, TITULO_RETENCION, lineasRetencion, { x: margenX, y, width: anchoUtil }) + ESPACIADO_BLOQUE;
 
@@ -201,6 +285,17 @@ export async function generarRideRetencion(opciones: RideOptions<Retencion>): Pr
   const columnas = construirColumnas(anchoUtil, DOC_SUSTENTO_COLUMN_SPECS);
   const filas = filasDocsSustento(documento.docsSustento);
   y = drawTablaGenerica(doc, columnas, filas, { x: margenX, y, width: anchoUtil }) + ESPACIADO_BLOQUE;
+
+  // Detalle de documentos sustento: código de sustento, totales, impuestos y
+  // pagos de CADA `docSustento` (hallazgo 9 — ver
+  // `lineasDocumentosSustentoDetalle`).
+  const lineasDetalleSustento = lineasDocumentosSustentoDetalle(documento.docsSustento);
+  if (lineasDetalleSustento.length > 0) {
+    y = asegurarEspacio(doc, y, medirBloqueTexto(doc, TITULO_DOC_SUSTENTO_DETALLE, lineasDetalleSustento, anchoUtil));
+    y =
+      drawBloqueTexto(doc, TITULO_DOC_SUSTENTO_DETALLE, lineasDetalleSustento, { x: margenX, y, width: anchoUtil }) +
+      ESPACIADO_BLOQUE;
+  }
 
   // Información adicional.
   y = asegurarEspacio(doc, y, medirInfoAdicional(doc, documento.infoAdicional, anchoUtil));

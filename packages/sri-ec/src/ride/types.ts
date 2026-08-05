@@ -71,6 +71,14 @@ export interface EmisorRide {
   contribuyenteEspecial?: string;
   agenteRetencion?: string;
   contribuyenteRimpe?: string;
+  /**
+   * Régimen Impositivo Simplificado (RISE, anterior a RIMPE). Modelado como
+   * `string` suelto (no boolean) porque así lo trae cada documento
+   * (`NotaCredito.rise`/`NotaDebito.rise`/`GuiaRemision.rise`) — auditoría
+   * "campos fiscales omitidos": era el único campo de cabecera del emisor
+   * que ningún `*.ride.ts` leía ni `drawEmisor` sabía imprimir.
+   */
+  rise?: string;
 }
 
 /** Datos del bloque "comprobante" (columna derecha de la cabecera): RUC, número, autorización, QR. */
@@ -97,6 +105,18 @@ export interface CompradorRide {
   etiquetaSujeto?: string;
   razonSocial: string;
   identificacion: string;
+  /**
+   * Código del catálogo SRI "Tipos de Identificación" (`04` RUC, `05`
+   * Cédula, `06` Pasaporte, `07` Consumidor Final, `08` Identificación del
+   * Exterior) — `tipoIdentificacionComprador`/`Proveedor`/`SujetoRetenido`
+   * en cada documento. Opcional porque no todos los `*.ride.ts` lo tienen
+   * disponible para el sujeto que dibujan con este bloque (p.ej. el
+   * `Destinatario` de guía de remisión no modela un tipo). Si viene,
+   * `drawComprador` lo imprime decodificado junto al número de
+   * identificación (auditoría "campos fiscales omitidos": antes se perdía
+   * del todo, ningún bloque lo leía).
+   */
+  tipoIdentificacion?: string;
   fechaEmision: string;
   direccion?: string;
   guiaRemision?: string;
@@ -139,4 +159,12 @@ export interface TotalesRide {
   totalDescuento?: string;
   propina?: string;
   importeTotal: string;
+  /**
+   * Moneda del comprobante (`Factura.moneda`/`LiquidacionCompra.moneda`/
+   * `NotaCredito.moneda`; `NotaDebito` no la modela). Opcional porque
+   * ninguno de los 3 documentos que la traen la declara obligatoria.
+   * `drawTotales` la imprime junto al resto de totales (auditoría "campos
+   * fiscales omitidos": antes se leía en ningún `*.ride.ts`).
+   */
+  moneda?: string;
 }

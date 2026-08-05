@@ -135,6 +135,81 @@ describe('ride: factura', () => {
     expect(texto).toContain('999999.99');
   });
 
+  /**
+   * Auditoría "campos fiscales omitidos", hallazgo 4 (HIGH): `cantidad` y
+   * `precioUnitario` se formateaban con `formatMonto(valor, 2)` —que
+   * REDONDEA a 2 decimales, no solo los muestra— así que un valor a granel
+   * como `precioUnitario: '0.004500'` se imprimía como `0.00`
+   * (aritméticamente imposible contra `precioTotalSinImpuesto`). Verificado
+   * con mutación: revertir `celdasDetalle` a `formatMonto(d.cantidad, 2)` /
+   * `formatMonto(d.precioUnitario, 2)` hace fallar este test (las 4
+   * aserciones de abajo dejan de encontrar `'0.0045'`/`'0.001'` y en su
+   * lugar aparece `'0.00'`).
+   */
+  it('cantidad/precioUnitario a granel se imprimen a la precisión real (hasta 6 decimales), sin redondear a 2 (hallazgo 4)', async () => {
+    const { generarRide } = await cargarRide();
+
+    const facturaAGranel: Factura = {
+      ...facturaFixture,
+      detalles: [
+        {
+          ...facturaFixture.detalles[0],
+          codigoPrincipal: 'COMB001',
+          descripcion: 'Combustible a granel',
+          cantidad: '2000.000000',
+          precioUnitario: '0.004500',
+          precioTotalSinImpuesto: '9.00',
+        },
+        {
+          ...facturaFixture.detalles[0],
+          codigoPrincipal: 'ORO001',
+          descripcion: 'Oro en polvo',
+          cantidad: '0.001000',
+          precioUnitario: '1000.000000',
+          precioTotalSinImpuesto: '1.00',
+        },
+      ],
+    };
+
+    const pdf = await generarRide({ documento: facturaAGranel, claveAcceso });
+    const texto = await extraerTextoPdf(pdf);
+
+    // Fila 1: cantidad 2000 (sin ceros de cola sobrantes, mínimo 2
+    // decimales) y precioUnitario 0.0045 (recortado de 6 a 4 decimales,
+    // NUNCA redondeado a 0.00).
+    expect(texto).toContain('2000.00');
+    expect(texto).toContain('0.0045');
+    // Fila 2: cantidad 0.001 (recortada de 6 a 3 decimales) y precioUnitario
+    // 1000.00 (NUNCA redondeado a 1000, se mantiene el mínimo de 2 decimales).
+    expect(texto).toContain('0.001');
+    expect(texto).toContain('1000.00');
+  });
+
+  /** Ordinario (sin decimales a granel): sigue leyendo `1`/`100.00`, no `1.000000`/`100.000000` — hallazgo 4. */
+  it('cantidad/precioUnitario enteros exactos se imprimen con 2 decimales, no con los 6 de la escala interna (hallazgo 4)', async () => {
+    const { generarRide } = await cargarRide();
+
+    const facturaOrdinaria: Factura = {
+      ...facturaFixture,
+      detalles: [
+        {
+          ...facturaFixture.detalles[0],
+          cantidad: '1.000000',
+          precioUnitario: '100.000000',
+          precioTotalSinImpuesto: '100.00',
+        },
+      ],
+    };
+
+    const pdf = await generarRide({ documento: facturaOrdinaria, claveAcceso });
+    const texto = await extraerTextoPdf(pdf);
+
+    expect(texto).toContain('1.00');
+    expect(texto).toContain('100.00');
+    expect(texto).not.toContain('1.000000');
+    expect(texto).not.toContain('100.000000');
+  });
+
   it('renderiza dirEstablecimiento/contribuyenteEspecial en el bloque emisor cuando el documento los trae (fix round 1, gap real confirmado del reviewer)', async () => {
     const { generarRide } = await cargarRide();
 
@@ -313,5 +388,145 @@ describe('ride: factura', () => {
     const texto = await extraerTextoPdf(await finalizar());
     expect(texto).toContain('Total descuento');
     expect(texto).toContain('5.00');
+  });
+
+  /**
+   * Auditoría "campos fiscales omitidos", hallazgo 3 (CRITICAL):
+   * `sumarValorPorCodigo`/las líneas de totales filtraban a `codigo ===
+   * '2'` (IVA) y `'3'` (ICE) — cualquier otro código (IRBPNR, `'5'`, o uno
+   * futuro no catalogado) se descartaba entero, así que las líneas
+   * impresas no reconciliaban con `importeTotal`. Los valores de este test
+   * son deliberadamente distintos entre sí (8.00/12.00/15.00) para que cada
+   * aserción sea inequívoca. Verificado con mutación: revertir
+   * `agruparValorPorCodigo`/`lineasTotales` a la versión que solo conocía
+   * ICE/IVA hace fallar este test (ni "IRBPNR" ni "15.00" aparecen).
+   */
+  it('drawTotales imprime CADA código de impuesto presente (IRBPNR incluido) y las líneas reconcilian con importeTotal (hallazgo 3, CRÍTICO)', async () => {
+    const { crearDocumentoRide, drawTotales } = await cargarBloqueTotales();
+    const { doc, finalizar } = await crearDocumentoRide('A4');
+
+    const subtotal = 100;
+    const ice = 8;
+    const iva = 12;
+    const irbpnr = 15;
+    const importeTotal = subtotal + ice + iva + irbpnr; // 135.00 — debe reconciliar.
+
+    drawTotales(
+      doc,
+      {
+        impuestos: [
+          { codigo: '2', codigoPorcentaje: '4', baseImponible: '100.00', valor: `${iva}.00` }, // IVA
+          { codigo: '3', codigoPorcentaje: '3010', baseImponible: '50.00', valor: `${ice}.00` }, // ICE
+          { codigo: '5', codigoPorcentaje: '0', baseImponible: '10.00', valor: `${irbpnr}.00` }, // IRBPNR
+        ],
+        totalSinImpuestos: `${subtotal}.00`,
+        importeTotal: `${importeTotal}.00`,
+      },
+      { x: 36, y: 36, width: 250 },
+    );
+
+    const texto = await extraerTextoPdf(await finalizar());
+
+    expect(texto).toContain('ICE');
+    expect(texto).toContain('8.00');
+    expect(texto).toContain('IVA');
+    expect(texto).toContain('12.00');
+    // IRBPNR: antes se descartaba entero — es la aserción que atrapa el bug raíz.
+    expect(texto).toContain('IRBPNR');
+    expect(texto).toContain('15.00');
+    expect(texto).toContain('VALOR TOTAL');
+    expect(texto).toContain('135.00');
+    expect(subtotal + ice + iva + irbpnr).toBe(importeTotal);
+  });
+
+  it('drawTotales cae a una etiqueta genérica con el código crudo para un impuesto no catalogado (nunca lo descarta)', async () => {
+    const { crearDocumentoRide, drawTotales } = await cargarBloqueTotales();
+    const { doc, finalizar } = await crearDocumentoRide('A4');
+
+    drawTotales(
+      doc,
+      {
+        impuestos: [
+          { codigo: '2', codigoPorcentaje: '4', baseImponible: '100.00', valor: '12.00' },
+          { codigo: '99', codigoPorcentaje: '0', baseImponible: '10.00', valor: '3.00' },
+        ],
+        totalSinImpuestos: '100.00',
+        importeTotal: '115.00',
+      },
+      { x: 36, y: 36, width: 250 },
+    );
+
+    const texto = await extraerTextoPdf(await finalizar());
+    expect(texto).toContain('Otro impuesto (código 99)');
+    expect(texto).toContain('3.00');
+  });
+
+  it('drawTotales imprime Moneda cuando viene en TotalesRide (auditoría "campos fiscales omitidos": moneda nunca se leía)', async () => {
+    const { crearDocumentoRide, drawTotales } = await cargarBloqueTotales();
+    const { doc, finalizar } = await crearDocumentoRide('A4');
+
+    drawTotales(
+      doc,
+      {
+        impuestos: [{ codigo: '2', codigoPorcentaje: '4', baseImponible: '100.00', valor: '12.00' }],
+        totalSinImpuestos: '100.00',
+        importeTotal: '112.00',
+        moneda: 'DOLAR',
+      },
+      { x: 36, y: 36, width: 250 },
+    );
+
+    const texto = await extraerTextoPdf(await finalizar());
+    expect(texto).toContain('Moneda');
+    expect(texto).toContain('DOLAR');
+  });
+
+  /**
+   * `moneda`/`tipoIdentificacionComprador` en `facturaFixture` ('DOLAR' y
+   * '05' respectivamente) llegan hasta el PDF a través de
+   * `factura.ride.ts` → `TotalesRide`/`CompradorRide` → `blocks.ts`.
+   */
+  it('propaga moneda y el tipo de identificación decodificado del comprador desde el documento real (facturaFixture)', async () => {
+    const { generarRide } = await cargarRide();
+
+    const pdf = await generarRide({ documento: facturaFixture, claveAcceso });
+    const texto = await extraerTextoPdf(pdf);
+
+    expect(texto).toContain('Moneda');
+    expect(texto).toContain(facturaFixture.moneda as string);
+    expect(texto).toContain(`Identificación: ${facturaFixture.identificacionComprador} (Cédula de Identidad)`);
+  });
+
+  /**
+   * Auditoría "campos fiscales omitidos" (item LOW): un `razonSocial` vacío
+   * no debe dejar una etiqueta colgante ("Razón Social / Nombres:" sin
+   * nada) — se omite la línea entera en vez de imprimir un `:` suelto.
+   */
+  it('un comprador con razonSocial vacía no deja la etiqueta "Razón Social / Nombres:" colgando sin valor', async () => {
+    const { generarRide } = await cargarRide();
+
+    const facturaSinNombreComprador: Factura = { ...facturaFixture, razonSocialComprador: '' };
+    const pdf = await generarRide({ documento: facturaSinNombreComprador, claveAcceso });
+    const texto = await extraerTextoPdf(pdf);
+
+    expect(texto).not.toContain('Razón Social / Nombres:');
+  });
+
+  /**
+   * Auditoría "campos fiscales omitidos" (item LOW): un `campoAdicional`
+   * con valor vacío no debe dejar un `:` suelto bajo "INFORMACIÓN
+   * ADICIONAL".
+   */
+  it('un campoAdicional con valor vacío no imprime su etiqueta (sin ":" suelto)', async () => {
+    const { generarRide } = await cargarRide();
+
+    const facturaConCampoVacio: Factura = {
+      ...facturaFixture,
+      infoAdicional: { ...facturaFixture.infoAdicional, Observacion: '' },
+    };
+    const pdf = await generarRide({ documento: facturaConCampoVacio, claveAcceso });
+    const texto = await extraerTextoPdf(pdf);
+
+    expect(texto).not.toContain('Observacion:');
   });
 });

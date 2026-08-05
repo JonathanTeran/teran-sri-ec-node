@@ -5,6 +5,7 @@ import { formatMonto } from 'sri-ec';
 import {
   asegurarEspacio,
   construirColumnas,
+  drawBloqueTexto,
   drawBloquesEnFila,
   drawComprador,
   drawComprobante,
@@ -14,6 +15,7 @@ import {
   drawTablaGenerica,
   drawTotales,
   formatNumeroComprobante,
+  medirBloqueTexto,
   medirComprador,
   medirComprobante,
   medirEmisor,
@@ -21,6 +23,7 @@ import {
   medirInfoAdicional,
   medirTotales,
   nombreDocumento,
+  nombreDocumentoPorCodigo,
 } from './blocks.js';
 import { crearDocumentoRide } from './pdf-doc.js';
 import { generarQr } from './qr.js';
@@ -40,6 +43,22 @@ const MOTIVO_COLUMN_SPECS: Array<[string, number, 'left' | 'right']> = [
 ];
 
 /**
+ * Título del bloque "Comprobante que Modifica", igual que en
+ * `nota-credito.ride.ts` — `NotaDebito` también modela
+ * `codDocModificado`/`numDocModificado`/`fechaEmisionDocSustento` (identifica
+ * el comprobante al que se le añade el débito), pero NO un `motivo` singular
+ * (tiene `motivos: Motivo[]`, su propia tabla más abajo), así que este
+ * bloque no lleva la línea "Motivo:" que sí tiene el de nota de crédito.
+ *
+ * Auditoría "campos fiscales omitidos", hallazgo 2 (CRÍTICO): antes de este
+ * fix, ninguno de estos 3 campos se leía en `nota-debito.ride.ts` — el
+ * comprobante que la nota de débito modifica no aparecía en ningún lado del
+ * PDF, en un documento fiscal cuyo propósito es precisamente relacionarse
+ * con otro ya emitido.
+ */
+const TITULO_MODIFICA = 'COMPROBANTE QUE MODIFICA';
+
+/**
  * RIDE de Nota de Débito (codDoc `05`). No tiene `detalles` (a diferencia de
  * Factura/LiquidacionCompra/NotaCredito): en su lugar dibuja la tabla de
  * `motivos` (razón/valor) sobre {@link drawTablaGenerica}, reutilizando el
@@ -47,6 +66,9 @@ const MOTIVO_COLUMN_SPECS: Array<[string, number, 'left' | 'right']> = [
  * asume el shape de `Detalle`, que este comprobante no modela).
  * `TotalesRide.totalDescuento` queda sin asignar porque `NotaDebito` no lo
  * modela (fix round 1 de Task 1: el campo es opcional justo por esto).
+ * `NotaDebito` tampoco modela `moneda` (a diferencia de Factura/
+ * LiquidacionCompra/NotaCredito), así que `TotalesRide.moneda` queda sin
+ * asignar aquí también.
  */
 export async function generarRideNotaDebito(opciones: RideOptions<NotaDebito>): Promise<Uint8Array> {
   const { documento, claveAcceso, autorizacion, logo } = opciones;
@@ -74,6 +96,7 @@ export async function generarRideNotaDebito(opciones: RideOptions<NotaDebito>): 
     contribuyenteEspecial: documento.contribuyenteEspecial,
     agenteRetencion: documento.infoTributaria.agenteRetencion,
     contribuyenteRimpe: documento.infoTributaria.contribuyenteRimpe,
+    rise: documento.rise,
   };
   const comprobante: ComprobanteRide = {
     ruc: documento.infoTributaria.ruc,
@@ -100,10 +123,24 @@ export async function generarRideNotaDebito(opciones: RideOptions<NotaDebito>): 
   const comprador: CompradorRide = {
     razonSocial: documento.razonSocialComprador,
     identificacion: documento.identificacionComprador,
+    tipoIdentificacion: documento.tipoIdentificacionComprador,
     fechaEmision: documento.fechaEmision,
   };
   y = asegurarEspacio(doc, y, medirComprador(doc, comprador, anchoUtil));
   y = drawComprador(doc, comprador, { x: margenX, y, width: anchoUtil }) + ESPACIADO_BLOQUE;
+
+  // Comprobante que modifica (hallazgo 2, CRÍTICO — ver comentario de
+  // `TITULO_MODIFICA` arriba). Mismo contenido que el bloque equivalente de
+  // `nota-credito.ride.ts`, sin la línea "Motivo:" (`NotaDebito` no modela
+  // un motivo singular: tiene su propia tabla `motivos` más abajo).
+  const nombreModificado = nombreDocumentoPorCodigo(documento.codDocModificado);
+  const lineasModifica = [
+    `Tipo de Comprobante Modificado: ${documento.codDocModificado} - ${nombreModificado}`,
+    `Número de Comprobante Modificado: ${documento.numDocModificado}`,
+    `Fecha de Emisión del Comprobante Sustento: ${documento.fechaEmisionDocSustento}`,
+  ];
+  y = asegurarEspacio(doc, y, medirBloqueTexto(doc, TITULO_MODIFICA, lineasModifica, anchoUtil));
+  y = drawBloqueTexto(doc, TITULO_MODIFICA, lineasModifica, { x: margenX, y, width: anchoUtil }) + ESPACIADO_BLOQUE;
 
   // Motivos (razón/valor) — reemplaza al detalle, que este comprobante no
   // tiene. `drawTablaGenerica` reserva su propio espacio.
