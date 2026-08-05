@@ -144,6 +144,34 @@ describe('dirEstablecimiento / contribuyenteEspecial: límites de longitud del X
     });
     expect(result.success).toBe(true);
   });
+
+  /**
+   * `infoTributaria.dirMatriz` (mismo simpleType `direccion` del XSD,
+   * `resources/xsd/factura_v2.1.0.xsd:332-338`, máx. 300) — MISMA clase de
+   * bug que `dirEstablecimiento`/`contribuyenteEspecial` arriba, encontrada
+   * en una auditoría posterior: se modelaba como `nonEmptyString` sin tope
+   * superior. `checkCamposLocales` (`business-validator.ts`) ya lo limitaba
+   * a 300 en la capa de negocio (`assertValid`/`validateBusiness`), pero
+   * `schemaFor(doc.tipo).safeParse(doc)` por sí solo —sin pasar por esa capa,
+   * un uso que `validateBusiness` documenta explícitamente como válido— no
+   * rechazaba un valor más largo: pasaba zod, se firmaba y el SRI lo
+   * rechazaba en la recepción, quemando la clave de acceso.
+   */
+  it('acepta infoTributaria.dirMatriz de exactamente 300 caracteres (límite del XSD)', () => {
+    const result = schemaFor(TipoComprobante.Factura).safeParse({
+      ...facturaFixture,
+      infoTributaria: { ...facturaFixture.infoTributaria, dirMatriz: 'A'.repeat(300) },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('rechaza infoTributaria.dirMatriz de 301 caracteres, nombrando el campo', () => {
+    const errors = errorsFor(TipoComprobante.Factura, {
+      ...facturaFixture,
+      infoTributaria: { ...facturaFixture.infoTributaria, dirMatriz: 'A'.repeat(301) },
+    });
+    expect(errors.some((e) => e.startsWith('infoTributaria.dirMatriz:'))).toBe(true);
+  });
 });
 
 describe('schemaFor(LiquidacionCompra)', () => {

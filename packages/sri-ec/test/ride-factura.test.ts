@@ -136,6 +136,39 @@ describe('ride: factura', () => {
   });
 
   /**
+   * Segunda ronda del mismo hallazgo que el test de arriba, encontrada en
+   * la verificación independiente del fix de `formatCantidadPrecision`
+   * (hallazgo 4): ensanchar `Cant.` de 0.07 a 0.085 alcanzaba para
+   * `999999.99` (2 decimales, ≈ 35.4pt), pero `formatCantidadPrecision`
+   * ahora puede imprimir hasta 6 — `123.123456` (≈ 39.6pt) volvía a
+   * desbordar los ≈ 38pt de ancho útil a 0.085 y pdfkit la partía en dos
+   * líneas ("123.12345" / "6"), la MISMA clase de bug con la cota de
+   * caracteres movida. `DETALLE_COLUMN_SPECS` pasó `Cant.` a 0.12 (usable
+   * ≈ 56pt, cabe el techo de 6 dígitos enteros documentado:
+   * `999999.999999` ≈ 52.1pt).
+   */
+  it('la columna "Cant." no parte una cantidad de 6 decimales a la mitad (segunda ronda del hallazgo, tras formatCantidadPrecision)', async () => {
+    const { generarRide } = await cargarRide();
+
+    const facturaConCantidadAGranel: Factura = {
+      ...facturaFixture,
+      detalles: [
+        { ...facturaFixture.detalles[0], codigoPrincipal: 'A', cantidad: '123.123456' },
+        { ...facturaFixture.detalles[0], codigoPrincipal: 'B', cantidad: '1234.123456' },
+      ],
+    };
+
+    const pdf = await generarRide({ documento: facturaConCantidadAGranel, claveAcceso });
+    const texto = await extraerTextoPdf(pdf);
+
+    // Si pdfkit hubiera partido el valor en dos líneas, `extraerTextoPdf`
+    // (une los `TextItem` de pdfjs con un espacio) mostraría un espacio en
+    // medio ("123.12345 6") en vez del valor contiguo.
+    expect(texto).toContain('123.123456');
+    expect(texto).toContain('1234.123456');
+  });
+
+  /**
    * Auditoría "campos fiscales omitidos", hallazgo 4 (HIGH): `cantidad` y
    * `precioUnitario` se formateaban con `formatMonto(valor, 2)` —que
    * REDONDEA a 2 decimales, no solo los muestra— así que un valor a granel

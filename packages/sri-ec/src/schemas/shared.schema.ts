@@ -14,9 +14,11 @@ import { isMonto } from '../utils/money.js';
  * Reglas compartidas (brief Task 5): `ruc` `/^\d{13}$/`, `estab`/`ptoEmi`
  * `/^\d{3}$/`, `secuencial` `/^\d{9}$/`, `fecha` `/^\d{2}\/\d{2}\/\d{4}$/`,
  * montos vía `isMonto` (`utils/money.ts`), `razonSocial` 1–300 caracteres,
- * `dirEstablecimiento` 1–300 caracteres, `contribuyenteEspecial` 1–13
- * caracteres (los dos últimos, límites del XSD confirmados por el reviewer
- * — antes modelados como `nonEmptyString` sin tope superior).
+ * `dirMatriz`/`dirEstablecimiento` 1–300 caracteres, `contribuyenteEspecial`
+ * 1–13 caracteres (los tres últimos, límites del XSD confirmados por el
+ * reviewer en dos rondas — `dirEstablecimiento`/`contribuyenteEspecial`
+ * primero, `dirMatriz` en una auditoría posterior — antes modelados como
+ * `nonEmptyString` sin tope superior).
  * La validación de catálogo (p.ej. que `ruc` tenga un tercer dígito válido,
  * que `formaPago` exista en `catalogs/forma-pago.ts`) es responsabilidad de
  * `BusinessValidator` (Task 6) — aquí solo se valida forma/estructura.
@@ -44,12 +46,26 @@ export const montoField = z.string().refine(isMonto, 'debe ser un monto numéric
 export const razonSocialField = z.string().min(1, 'no puede estar vacío').max(300, 'excede el máximo de 300 caracteres');
 
 /**
- * `dirEstablecimiento`: 1–300 caracteres (port del simpleType `direccion`
- * del XSD — el mismo límite que `dirMatriz`/`direccionComprador`, pero
- * aparte de `nonEmptyString` porque a diferencia de esos otros campos SÍ
- * tiene tope superior en el XSD). Sin este `.max`, un valor más largo pasa
- * zod, se firma y el SRI lo rechaza en la recepción — quemando la clave de
- * acceso (hallazgo confirmado del reviewer).
+ * `dirEstablecimiento`/`dirMatriz`: 1–300 caracteres (port del simpleType
+ * `direccion` del XSD, confirmado en `resources/xsd/factura_v2.1.0.xsd:332-338`
+ * — `<xs:maxLength value="300"/>`, el mismo tipo que usan `dirMatriz`,
+ * `dirEstablecimiento` y `direccionComprador`/`direccionProveedor`/
+ * `dirDestinatario`/`dirPartida`). Un solo objeto zod, reusado por
+ * `infoTributariaSchema` (`dirMatriz`) y por los 6 `*.schema.ts`
+ * (`dirEstablecimiento`) — el nombre quedó fijado por el primer uso
+ * (`dirEstablecimiento`) cuando aún no se aplicaba a `dirMatriz`.
+ *
+ * `dirEstablecimiento` ya tenía este `.max` (hallazgo confirmado del
+ * reviewer, fix round 1: sin él, un valor más largo pasaba zod, se firmaba
+ * y el SRI lo rechazaba en la recepción, quemando la clave de acceso).
+ * `dirMatriz` NO lo tenía — modelado como `nonEmptyString` sin tope
+ * superior — la MISMA clase de bug, encontrada en una auditoría posterior:
+ * `checkCamposLocales` (`business-validator.ts`) ya limita `dirMatriz` a
+ * 300 en la capa de reglas de negocio (`validateBusiness`/`assertValid`),
+ * pero quien valide solo con `schemaFor(doc.tipo).safeParse(doc)` — el uso
+ * "de forma independiente" que `validateBusiness` documenta como válido —
+ * no obtenía ese límite. Un schema de forma/estructura incompleto no debe
+ * depender de que el llamador también corra la capa de negocio.
  */
 export const dirEstablecimientoField = z.string().min(1, 'no puede estar vacío').max(300, 'excede el máximo de 300 caracteres');
 
@@ -82,7 +98,7 @@ export const infoTributariaSchema = z
     estab: estabPtoEmiField,
     ptoEmi: estabPtoEmiField,
     secuencial: secuencialField,
-    dirMatriz: nonEmptyString,
+    dirMatriz: dirEstablecimientoField,
     tipoEmision: z.enum(TipoEmision).optional(),
     nombreComercial: nonEmptyString.optional(),
     contribuyenteRimpe: nonEmptyString.optional(),

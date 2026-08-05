@@ -750,20 +750,39 @@ export function construirColumnas(
 
 /**
  * Columnas fijas del detalle de factura/liquidación de compra/nota de
- * crédito. `Cant.`: 0.085 (no 0.07, hallazgo confirmado del reviewer) — con
- * 0.07 el ancho útil de la columna en A4 (usable ≈ 30pt a `TAMANO_TABLA`)
- * era menor que `999999.99` (el máximo realista con 2 decimales, ≈ 35.4pt),
- * así que un `Detalle` con esa cantidad partía el número a la mitad entre
- * dos líneas ("999999." / "99") — inaceptable en un documento fiscal, donde
- * confundir el valor invita a un error de lectura. Se compensa restando
- * 0.015 a `Descripción` (la columna con más margen de sobra: ancho de wrap
- * variable por diseño, no un valor fijo que se pueda partir mal).
+ * crédito.
+ *
+ * `Cant.`: 0.12 (no 0.085 — segunda revisión de este mismo ancho, ver
+ * historial: primero 0.07→0.085 cuando `Cant.` solo mostraba 2 decimales
+ * fijos, luego 0.085→0.12 cuando {@link formatCantidadPrecision} (hallazgo
+ * 4 de la auditoría "campos fiscales omitidos") empezó a imprimir hasta 6
+ * decimales). El hueco entre ambas correcciones: a 0.085 el ancho útil en
+ * A4 (usable ≈ 38pt a `TAMANO_TABLA`) alcanzaba para `999999.99` (2
+ * decimales, ≈ 35.4pt) pero NO para `123.123456` (6 decimales, ≈ 39.6pt) —
+ * cualquier cantidad a granel de 10+ caracteres volvía a partirse a la
+ * mitad entre dos líneas, la MISMA clase de bug que 0.07→0.085 ya había
+ * cerrado, solo que con la cota de caracteres movida por el propio fix de
+ * precisión. A 0.12 (usable ≈ 56pt) cabe `999999.999999` (13 caracteres,
+ * ≈ 52.1pt) — el mismo techo de "6 dígitos enteros" que ya documentaba el
+ * comentario original de esta columna, extendido a los 6 decimales reales
+ * en vez de los 2 que asumía. Se compensa restando 0.035 a `Descripción`
+ * (la columna con más margen de sobra: ancho de wrap variable por diseño,
+ * no un valor fijo que se pueda partir mal). Las fracciones siguen sumando
+ * exactamente 1.00.
+ *
+ * `P. Unitario`: 0.12 sin cambios — usable ≈ 56pt, mismo techo de "6
+ * dígitos enteros" (`999999.999999` ≈ 52.1pt, cabe con margen). Un
+ * `precioUnitario` de 7+ dígitos enteros (≥ 1'000.000,00 por unidad) sí
+ * desborda por una fracción de punto (`1234567.123456` ≈ 56.3pt > 56pt de
+ * usable) — fuera del mismo techo documentado de esta tabla, no un caso
+ * cubierto (ni antes ni ahora): un precio unitario de esa magnitud no es
+ * realista en un comprobante SRI denominado en USD.
  */
 const DETALLE_COLUMN_SPECS: Array<[string, number, 'left' | 'right']> = [
   ['Cód. Principal', 0.13, 'left'],
   ['Cód. Auxiliar', 0.11, 'left'],
-  ['Cant.', 0.085, 'right'],
-  ['Descripción', 0.325, 'left'],
+  ['Cant.', 0.12, 'right'],
+  ['Descripción', 0.29, 'left'],
   ['P. Unitario', 0.12, 'right'],
   ['Descuento', 0.1, 'right'],
   ['P. Total', 0.13, 'right'],
