@@ -27,6 +27,15 @@ describe('schemaFor(Factura)', () => {
     expect(result.success).toBe(true);
   });
 
+  it('acepta dirEstablecimiento/contribuyenteEspecial cuando están presentes (fix round 1, gap real confirmado del reviewer)', () => {
+    const result = schemaFor(TipoComprobante.Factura).safeParse({
+      ...facturaFixture,
+      dirEstablecimiento: 'Av. Amazonas N24-03, Quito',
+      contribuyenteEspecial: '5368',
+    });
+    expect(result.success).toBe(true);
+  });
+
   it('rechaza un ruc de 12 dígitos, nombrando el campo', () => {
     const errors = errorsFor(TipoComprobante.Factura, {
       ...facturaFixture,

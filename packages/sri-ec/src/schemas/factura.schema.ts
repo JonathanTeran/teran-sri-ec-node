@@ -25,6 +25,8 @@ export const facturaSchema = z
     tipo: z.literal(TipoComprobante.Factura),
     infoTributaria: infoTributariaSchema,
     fechaEmision: fechaField,
+    dirEstablecimiento: nonEmptyString.optional(),
+    contribuyenteEspecial: nonEmptyString.optional(),
     tipoIdentificacionComprador: nonEmptyString,
     razonSocialComprador: razonSocialField,
     identificacionComprador: nonEmptyString,
