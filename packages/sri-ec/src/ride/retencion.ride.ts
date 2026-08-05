@@ -6,17 +6,23 @@ import {
   asegurarEspacio,
   construirColumnas,
   drawBloqueTexto,
+  drawBloquesEnFila,
   drawComprador,
   drawComprobante,
   drawEmisor,
   drawInfoAdicional,
   drawTablaGenerica,
   formatNumeroComprobante,
+  medirBloqueTexto,
+  medirComprador,
+  medirComprobante,
+  medirEmisor,
+  medirInfoAdicional,
   nombreDocumento,
 } from './blocks.js';
 import { crearDocumentoRide } from './pdf-doc.js';
 import { generarQr } from './qr.js';
-import type { AreaRide, ComprobanteRide, CompradorRide, EmisorRide, RideOptions } from './types.js';
+import type { ComprobanteRide, CompradorRide, EmisorRide, RideOptions } from './types.js';
 
 /** Separación vertical entre bloques apilados. */
 const ESPACIADO_BLOQUE = 10;
@@ -37,6 +43,9 @@ const PROPORCION_EMISOR = 0.55;
  * las tres tienen de sobra frente a su contenido real (`RENTA`/`IVA`/`ISD`,
  * códigos cortos, porcentajes de pocos dígitos).
  */
+/** Título del bloque propio del comprobante de retención (período fiscal + total retenido). */
+const TITULO_RETENCION = 'RETENCIÓN';
+
 const DOC_SUSTENTO_COLUMN_SPECS: Array<[string, number, 'left' | 'right']> = [
   ['Comprobante', 0.115, 'left'],
   ['Número', 0.16, 'left'],
@@ -148,9 +157,6 @@ export async function generarRideRetencion(opciones: RideOptions<Retencion>): Pr
     agenteRetencion: documento.infoTributaria.agenteRetencion,
     contribuyenteRimpe: documento.infoTributaria.contribuyenteRimpe,
   };
-  const areaEmisor: AreaRide = { x: margenX, y, width: anchoEmisor };
-  const yEmisor = drawEmisor(doc, emisor, areaEmisor);
-
   const comprobante: ComprobanteRide = {
     ruc: documento.infoTributaria.ruc,
     nombreDocumento: nombreDocumento(documento.tipo),
@@ -160,10 +166,17 @@ export async function generarRideRetencion(opciones: RideOptions<Retencion>): Pr
     claveAcceso,
     autorizacion,
   };
-  const areaComprobante: AreaRide = { x: margenX + anchoEmisor, y, width: anchoComprobante };
-  const yComprobante = drawComprobante(doc, comprobante, areaComprobante, qr);
-
-  y = Math.max(yEmisor, yComprobante) + ESPACIADO_BLOQUE;
+  y =
+    drawBloquesEnFila(
+      doc,
+      y,
+      medirEmisor(doc, emisor, anchoEmisor),
+      medirComprobante(doc, comprobante, anchoComprobante, qr !== undefined),
+      (yFila) => drawEmisor(doc, emisor, { x: margenX, y: yFila, width: anchoEmisor }),
+      (yFila) =>
+        drawComprobante(doc, comprobante, { x: margenX + anchoEmisor, y: yFila, width: anchoComprobante }, qr),
+      ESPACIADO_BLOQUE,
+    ) + ESPACIADO_BLOQUE;
 
   // Sujeto retenido: mismo bloque "comprador", etiqueta cambiada.
   const sujetoRetenido: CompradorRide = {
@@ -172,27 +185,25 @@ export async function generarRideRetencion(opciones: RideOptions<Retencion>): Pr
     identificacion: documento.identificacionSujetoRetenido,
     fechaEmision: documento.fechaEmision,
   };
-  y = asegurarEspacio(doc, y, 40);
+  y = asegurarEspacio(doc, y, medirComprador(doc, sujetoRetenido, anchoUtil));
   y = drawComprador(doc, sujetoRetenido, { x: margenX, y, width: anchoUtil }) + ESPACIADO_BLOQUE;
 
   // Período fiscal + total retenido.
-  y = asegurarEspacio(doc, y, 30);
-  y =
-    drawBloqueTexto(
-      doc,
-      'RETENCIÓN',
-      [`Período Fiscal: ${documento.periodoFiscal}`, `Total Retenido: ${totalRetenido(documento.docsSustento)}`],
-      { x: margenX, y, width: anchoUtil },
-    ) + ESPACIADO_BLOQUE;
+  const lineasRetencion = [
+    `Período Fiscal: ${documento.periodoFiscal}`,
+    `Total Retenido: ${totalRetenido(documento.docsSustento)}`,
+  ];
+  y = asegurarEspacio(doc, y, medirBloqueTexto(doc, TITULO_RETENCION, lineasRetencion, anchoUtil));
+  y = drawBloqueTexto(doc, TITULO_RETENCION, lineasRetencion, { x: margenX, y, width: anchoUtil }) + ESPACIADO_BLOQUE;
 
   // Documentos sustento (una fila de tabla por cada `retenciones[]`).
-  y = asegurarEspacio(doc, y, 30);
+  // `drawTablaGenerica` reserva su propio espacio: es dueña de su paginación fila a fila.
   const columnas = construirColumnas(anchoUtil, DOC_SUSTENTO_COLUMN_SPECS);
   const filas = filasDocsSustento(documento.docsSustento);
   y = drawTablaGenerica(doc, columnas, filas, { x: margenX, y, width: anchoUtil }) + ESPACIADO_BLOQUE;
 
   // Información adicional.
-  y = asegurarEspacio(doc, y, 20);
+  y = asegurarEspacio(doc, y, medirInfoAdicional(doc, documento.infoAdicional, anchoUtil));
   drawInfoAdicional(doc, documento.infoAdicional, { x: margenX, y, width: anchoUtil });
 
   return finalizar();

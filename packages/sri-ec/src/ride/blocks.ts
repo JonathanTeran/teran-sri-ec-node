@@ -110,43 +110,306 @@ export function formatNumeroComprobante(info: Pick<InfoTributaria, 'estab' | 'pt
 /**
  * Si dibujar `alturaMinima` puntos más en `y` desbordaría la página, abre una
  * página nueva y devuelve el `y` de inicio (margen superior); si no, devuelve
- * `y` tal cual. Es el único mecanismo de paginación del motor — cada bloque
- * (y cada fila de {@link drawTablaDetalles}) lo usa antes de dibujar.
+ * `y` tal cual.
+ *
+ * `alturaMinima` DEBE ser el alto real del bloque que se va a dibujar
+ * (`medirEmisor`, `medirTotales`, ... — nunca una constante adivinada): el
+ * motor es "medir y después dibujar", y una reserva menor que el bloque real
+ * era la causa raíz de que las cajas cruzaran de página. Ver
+ * {@link dibujarCaja}.
  */
 export function asegurarEspacio(doc: PDFKit.PDFDocument, y: number, alturaMinima: number): number {
-  const limite = doc.page.height - doc.page.margins.bottom;
-  if (y + alturaMinima > limite) {
+  if (y + alturaMinima > limiteInferior(doc)) {
     doc.addPage();
     return doc.page.margins.top;
   }
   return y;
 }
 
-/** Marca el inicio del contenido interno de una "caja" con borde (ver {@link cerrarCaja}). */
-function iniciarCaja(area: AreaRide): number {
-  return area.y + PADDING_CAJA;
+/** `y` máximo en el que se puede dibujar sin invadir el margen inferior de la página actual. */
+function limiteInferior(doc: PDFKit.PDFDocument): number {
+  return doc.page.height - doc.page.margins.bottom;
 }
 
-/** Dibuja el borde de la caja desde `área.y` hasta `y + PADDING_CAJA` y devuelve ese borde inferior. */
-function cerrarCaja(doc: PDFKit.PDFDocument, area: AreaRide, y: number): number {
+/** Alto útil de una página (entre el margen superior y el inferior). */
+function alturaUtilPagina(doc: PDFKit.PDFDocument): number {
+  return doc.page.height - doc.page.margins.top - doc.page.margins.bottom;
+}
+
+/**
+ * `doc.text` con la paginación implícita de pdfkit DESACTIVADA.
+ *
+ * El `LineWrapper` de pdfkit, cuando una línea pasaría de `page.maxY()`,
+ * llama solo a `continueOnNewPage()` — sin avisar a quien está dibujando. Eso
+ * es lo que partía las cajas del RIDE: el bloque escribía su contenido, la
+ * última línea saltaba de página por su cuenta y el borde se dibujaba después
+ * con el `y` de la página nueva contra el `y` de la vieja (rectángulo de alto
+ * NEGATIVO en la página equivocada, y la página anterior sin borde).
+ *
+ * Pasar `height` hace que `LineWrapper` use `startY + height` como `maxY` en
+ * vez del final de la página; con `Infinity` ese límite no se alcanza nunca y
+ * `continueOnNewPage()` no se llega a llamar. Es exactamente lo que hace
+ * `doc.heightOfString` internamente, así que lo medido y lo dibujado coinciden
+ * al punto. La paginación pasa a ser responsabilidad exclusiva —y explícita—
+ * de {@link asegurarEspacio}, {@link dibujarCaja} y {@link drawTablaGenerica}.
+ */
+function escribirTexto(
+  doc: PDFKit.PDFDocument,
+  texto: string,
+  x: number,
+  y: number,
+  opciones: PDFKit.Mixins.TextOptions,
+): void {
+  doc.text(texto, x, y, { ...opciones, height: Infinity });
+}
+
+/**
+ * Parte `texto` en trozos que quepan en `altoMax` puntos al ancho `ancho`,
+ * cortando solo por espacios/saltos de línea (nunca a mitad de palabra: en un
+ * documento fiscal, partir un número o un código invita a leerlo mal). Solo
+ * se usa para contenido que NO cabe entero en una página — la alternativa era
+ * dejarlo desbordar el papel o perderlo.
+ */
+function partirTextoPorAltura(doc: PDFKit.PDFDocument, texto: string, ancho: number, altoMax: number): string[] {
+  if (texto === '' || doc.heightOfString(texto, { width: ancho }) <= altoMax) {
+    return [texto];
+  }
+
+  const trozos: string[] = [];
+  let actual = '';
+  for (const token of texto.split(/(\s+)/)) {
+    const candidato = actual + token;
+    if (actual.trim() !== '' && doc.heightOfString(candidato, { width: ancho }) > altoMax) {
+      trozos.push(actual.replace(/\s+$/, ''));
+      actual = token.replace(/^\s+/, '');
+    } else {
+      actual = candidato;
+    }
+  }
+  if (actual.trim() !== '') {
+    trozos.push(actual);
+  }
+  return trozos.length > 0 ? trozos : [texto];
+}
+
+/** Dibuja el borde de una caja. `alto` siempre es positivo: lo garantiza {@link dibujarCaja}. */
+function dibujarBordeCaja(doc: PDFKit.PDFDocument, x: number, y: number, ancho: number, alto: number): void {
+  doc.lineWidth(0.75).strokeColor(COLOR_TEXTO).rect(x, y, ancho, alto).stroke();
+}
+
+/** Ancho por defecto de la columna del valor en una línea "etiqueta ... valor". */
+const ANCHO_VALOR = 75;
+
+/**
+ * Una línea del contenido de una caja con borde. `texto` y `valor` (si viene)
+ * son UNA sola unidad indivisible: se dibujan en el mismo `y` y el avance es
+ * el máximo de los dos altos — antes eran dos `doc.text` independientes, así
+ * que una etiqueta que envolvía a dos líneas quedaba pisada por la fila
+ * siguiente, y una etiqueta que provocaba salto de página dejaba su importe
+ * en la página siguiente ("VALOR TOTAL" solo en una página, "112.00" en otra).
+ */
+interface LineaCaja {
+  texto: string;
+  /** Si viene, se imprime alineado a la derecha, en la MISMA línea que `texto`. */
+  valor?: string;
+  anchoValor?: number;
+  /** Ancho de envoltura; por defecto, el ancho útil de la caja. */
+  ancho?: number;
+  negrita?: boolean;
+  tamano?: number;
+  color?: string;
+  /** Hueco vertical de alto fijo: no imprime nada ni añade `ESPACIO_LINEA`. */
+  espaciador?: number;
+}
+
+/** Deja `doc` con la fuente/tamaño/color de `linea`. */
+function aplicarFuente(doc: PDFKit.PDFDocument, linea: LineaCaja): void {
+  doc
+    .font(linea.negrita ? FUENTE_NEGRITA : FUENTE_NORMAL)
+    .fontSize(linea.tamano ?? TAMANO_TEXTO)
+    .fillColor(linea.color ?? COLOR_TEXTO);
+}
+
+/** Alto de `linea` sin contar el `ESPACIO_LINEA` que la separa de la siguiente. */
+function alturaLinea(doc: PDFKit.PDFDocument, linea: LineaCaja, anchoCaja: number): number {
+  if (linea.espaciador !== undefined) {
+    return linea.espaciador;
+  }
+  aplicarFuente(doc, linea);
+  const ancho = linea.ancho ?? anchoCaja;
+  if (linea.valor === undefined) {
+    return doc.heightOfString(linea.texto, { width: ancho });
+  }
+  const anchoValor = linea.anchoValor ?? ANCHO_VALOR;
+  return Math.max(
+    doc.heightOfString(linea.texto, { width: ancho - anchoValor - ESPACIO_LINEA }),
+    doc.heightOfString(linea.valor, { width: anchoValor }),
+  );
+}
+
+/** Avance vertical total de `linea` (alto + separación con la siguiente). */
+function avanceLinea(doc: PDFKit.PDFDocument, linea: LineaCaja, anchoCaja: number): number {
+  return alturaLinea(doc, linea, anchoCaja) + (linea.espaciador !== undefined ? 0 : ESPACIO_LINEA);
+}
+
+/** Dibuja `linea` en `(x, y)`. No toca el `y` del llamador: el avance lo controla {@link dibujarCaja}. */
+function dibujarLinea(doc: PDFKit.PDFDocument, linea: LineaCaja, x: number, y: number, anchoCaja: number): void {
+  if (linea.espaciador !== undefined) {
+    return;
+  }
+  aplicarFuente(doc, linea);
+  const ancho = linea.ancho ?? anchoCaja;
+  if (linea.valor === undefined) {
+    escribirTexto(doc, linea.texto, x, y, { width: ancho });
+    return;
+  }
+  const anchoValor = linea.anchoValor ?? ANCHO_VALOR;
+  escribirTexto(doc, linea.texto, x, y, { width: ancho - anchoValor - ESPACIO_LINEA });
+  escribirTexto(doc, linea.valor, x + ancho - anchoValor, y, { width: anchoValor, align: 'right' });
+}
+
+/** Opciones de composición de una caja con borde. */
+interface OpcionesCaja {
+  /**
+   * Título del bloque. Si la caja no cabe en una página se cierra el borde,
+   * se abre una página nueva y se reimprime como "<título> (continuación)".
+   */
+  titulo?: string;
+  /** Alto reservado al principio del contenido para `dibujarExtra` (p.ej. el logo del emisor). */
+  alturaExtra?: number;
+  /** Pinta contenido no textual al principio de la caja (logo, QR). */
+  dibujarExtra?: (x: number, y: number, anchoCaja: number) => void;
+}
+
+/** Línea de continuación que encabeza la caja al saltar de página. */
+function lineaContinuacion(titulo: string): LineaCaja {
+  return { texto: `${titulo} (continuación)`, negrita: true, tamano: TAMANO_TITULO };
+}
+
+/**
+ * Alto total (borde a borde) que ocuparán `lineas` en una caja de ancho
+ * `anchoArea`. Es la medida que los `*.ride.ts` pasan a
+ * {@link asegurarEspacio} ANTES de dibujar.
+ */
+function medirCaja(
+  doc: PDFKit.PDFDocument,
+  lineas: LineaCaja[],
+  anchoArea: number,
+  alturaExtra = 0,
+): number {
+  const anchoCaja = anchoArea - PADDING_CAJA * 2;
+  let alto = PADDING_CAJA * 2 + alturaExtra;
+  for (const linea of lineas) {
+    alto += avanceLinea(doc, linea, anchoCaja);
+  }
+  return alto;
+}
+
+/**
+ * Dibuja una caja con borde: mide cada línea, la escribe con la paginación
+ * implícita de pdfkit desactivada ({@link escribirTexto}) y cierra el borde
+ * con un alto que SIEMPRE es positivo y en la misma página en la que lo
+ * abrió.
+ *
+ * Si el contenido no cabe entero (una `infoAdicional` larguísima, muchas
+ * formas de pago), la caja se parte DELIBERADAMENTE: cierra el borde en la
+ * página actual, abre una página nueva, reimprime el título como
+ * "(continuación)" y abre un borde nuevo. Nunca deja una caja sin borde ni un
+ * rectángulo de alto negativo.
+ */
+function dibujarCaja(
+  doc: PDFKit.PDFDocument,
+  area: AreaRide,
+  lineas: LineaCaja[],
+  opciones: OpcionesCaja = {},
+): number {
+  const anchoCaja = area.width - PADDING_CAJA * 2;
+  const x = area.x + PADDING_CAJA;
+  const alturaExtra = opciones.alturaExtra ?? 0;
+
+  // Presupuesto de alto para una línea suelta en una caja que empieza arriba
+  // de una página vacía. Una línea más alta que esto no cabe en NINGUNA
+  // página, así que se parte por palabras antes de empezar a dibujar.
+  const altoContinuacion = opciones.titulo
+    ? avanceLinea(doc, lineaContinuacion(opciones.titulo), anchoCaja)
+    : 0;
+  const presupuestoLinea = alturaUtilPagina(doc) - PADDING_CAJA * 2 - ESPACIO_LINEA - altoContinuacion;
+  const lineasFinales = lineas.flatMap((linea) => partirLinea(doc, linea, anchoCaja, presupuestoLinea));
+
+  let topCaja = area.y;
+  let y = topCaja + PADDING_CAJA;
+  if (opciones.dibujarExtra) {
+    opciones.dibujarExtra(x, y, anchoCaja);
+  }
+  y += alturaExtra;
+
+  let hayContenido = alturaExtra > 0;
+  for (const linea of lineasFinales) {
+    const alto = alturaLinea(doc, linea, anchoCaja);
+    if (hayContenido && y + alto + PADDING_CAJA > limiteInferior(doc)) {
+      dibujarBordeCaja(doc, area.x, topCaja, area.width, y + PADDING_CAJA - topCaja);
+      doc.addPage();
+      topCaja = doc.page.margins.top;
+      y = topCaja + PADDING_CAJA;
+      if (opciones.titulo) {
+        const continuacion = lineaContinuacion(opciones.titulo);
+        dibujarLinea(doc, continuacion, x, y, anchoCaja);
+        y += avanceLinea(doc, continuacion, anchoCaja);
+      }
+    }
+    dibujarLinea(doc, linea, x, y, anchoCaja);
+    y += avanceLinea(doc, linea, anchoCaja);
+    hayContenido = true;
+  }
+
   const abajo = y + PADDING_CAJA;
-  doc.lineWidth(0.75).strokeColor(COLOR_TEXTO).rect(area.x, area.y, area.width, abajo - area.y).stroke();
+  dibujarBordeCaja(doc, area.x, topCaja, area.width, abajo - topCaja);
   return abajo;
 }
 
-/** Escribe una línea "etiqueta ... valor" (valor alineado a la derecha) y devuelve el `y` siguiente. */
-function escribirLinea(
+/** Parte una línea más alta que una página en varias; el `valor` se queda con el primer trozo. */
+function partirLinea(doc: PDFKit.PDFDocument, linea: LineaCaja, anchoCaja: number, presupuesto: number): LineaCaja[] {
+  if (linea.espaciador !== undefined || alturaLinea(doc, linea, anchoCaja) <= presupuesto) {
+    return [linea];
+  }
+  aplicarFuente(doc, linea);
+  const ancho = linea.ancho ?? anchoCaja;
+  const anchoTexto = linea.valor === undefined ? ancho : ancho - (linea.anchoValor ?? ANCHO_VALOR) - ESPACIO_LINEA;
+  const trozos = partirTextoPorAltura(doc, linea.texto, anchoTexto, presupuesto);
+  return trozos.map((texto, i) => (i === 0 ? { ...linea, texto } : { ...linea, texto, valor: undefined }));
+}
+
+/**
+ * Dibuja dos bloques en la MISMA fila (izquierda y derecha), garantizando que
+ * los dos empiezan en la misma página y en el mismo `y`.
+ *
+ * Antes, cada `*.ride.ts` llamaba a los dos `draw*` con el mismo `y` local: si
+ * el bloque de la izquierda saltaba de página, el de la derecha se dibujaba
+ * en ese `y` viejo pero sobre la página NUEVA (caja fantasma a media página y
+ * el bloque entero descolgado). Aquí se reserva por adelantado el alto del
+ * más alto de los dos, así que ninguno necesita saltar.
+ *
+ * Si ni siquiera el más alto cabe en una página entera, se apilan en vez de
+ * ponerse lado a lado: es la única composición que no deja una caja a medias.
+ */
+export function drawBloquesEnFila(
   doc: PDFKit.PDFDocument,
-  x: number,
   y: number,
-  width: number,
-  etiqueta: string,
-  valor: string,
-  anchoValor = 75,
+  altoIzquierda: number,
+  altoDerecha: number,
+  izquierda: (y: number) => number,
+  derecha: (y: number) => number,
+  separacion = 0,
 ): number {
-  doc.text(etiqueta, x, y, { width: width - anchoValor - ESPACIO_LINEA });
-  doc.text(valor, x + width - anchoValor, y, { width: anchoValor, align: 'right' });
-  return doc.y + ESPACIO_LINEA;
+  const alto = Math.max(altoIzquierda, altoDerecha);
+  if (alto > alturaUtilPagina(doc)) {
+    let yActual = asegurarEspacio(doc, y, alturaUtilPagina(doc));
+    yActual = izquierda(yActual) + separacion;
+    yActual = asegurarEspacio(doc, yActual, alturaUtilPagina(doc));
+    return derecha(yActual);
+  }
+  const yFila = asegurarEspacio(doc, y, alto);
+  return Math.max(izquierda(yFila), derecha(yFila));
 }
 
 /**
@@ -158,67 +421,59 @@ function escribirLinea(
  * vienen en `emisor`.
  */
 export function drawEmisor(doc: PDFKit.PDFDocument, emisor: EmisorRide, area: AreaRide): number {
-  let y = iniciarCaja(area);
-  const x = area.x + PADDING_CAJA;
-  const width = area.width - PADDING_CAJA * 2;
+  return dibujarCaja(doc, area, lineasEmisor(emisor), {
+    alturaExtra: emisor.logo ? ALTURA_LOGO : 0,
+    dibujarExtra: emisor.logo
+      ? (x, y, anchoCaja) => {
+          try {
+            doc.image(Buffer.from(emisor.logo as Uint8Array), x, y, { fit: [anchoCaja, 50], align: 'center' });
+          } catch {
+            // pdfkit solo reconoce PNG/JPEG (lee la firma de bytes, no una extensión
+            // de archivo) y ante cualquier otro formato o un buffer corrupto lanza
+            // un `Error` genérico ("Unknown image format") sin `.code` — se envuelve
+            // en un SriError con la causa probable y el remedio, igual que
+            // `deps.ts` envuelve el fallo de `import()` de una dependencia opcional.
+            throw new SriError(
+              'El logo del emisor no se pudo procesar: formato no soportado o archivo corrupto. Usa PNG o JPG.',
+              'RIDE_INVALID_LOGO',
+            );
+          }
+        }
+      : undefined,
+  });
+}
 
-  if (emisor.logo) {
-    try {
-      doc.image(Buffer.from(emisor.logo), x, y, { fit: [width, 50], align: 'center' });
-    } catch {
-      // pdfkit solo reconoce PNG/JPEG (lee la firma de bytes, no una extensión
-      // de archivo) y ante cualquier otro formato o un buffer corrupto lanza
-      // un `Error` genérico ("Unknown image format") sin `.code` — se envuelve
-      // en un SriError con la causa probable y el remedio, igual que
-      // `deps.ts` envuelve el fallo de `import()` de una dependencia opcional.
-      throw new SriError(
-        'El logo del emisor no se pudo procesar: formato no soportado o archivo corrupto. Usa PNG o JPG.',
-        'RIDE_INVALID_LOGO',
-      );
-    }
-    y += 54;
-  }
+/** Alto reservado para el logo del emisor (50 pt de imagen + separación). */
+const ALTURA_LOGO = 54;
 
-  doc.font(FUENTE_NEGRITA).fontSize(TAMANO_TITULO).fillColor(COLOR_TEXTO);
-  doc.text(emisor.razonSocial, x, y, { width });
-  y = doc.y + ESPACIO_LINEA;
-
-  doc.font(FUENTE_NORMAL).fontSize(TAMANO_TEXTO);
-
+/** Líneas del bloque emisor, en el orden en que se imprimen. */
+function lineasEmisor(emisor: EmisorRide): LineaCaja[] {
+  const lineas: LineaCaja[] = [{ texto: emisor.razonSocial, negrita: true, tamano: TAMANO_TITULO }];
   if (emisor.nombreComercial) {
-    doc.text(`Nombre Comercial: ${emisor.nombreComercial}`, x, y, { width });
-    y = doc.y + ESPACIO_LINEA;
+    lineas.push({ texto: `Nombre Comercial: ${emisor.nombreComercial}` });
   }
-
-  doc.text(`Dirección Matriz: ${emisor.dirMatriz}`, x, y, { width });
-  y = doc.y + ESPACIO_LINEA;
-
+  lineas.push({ texto: `Dirección Matriz: ${emisor.dirMatriz}` });
   if (emisor.dirEstablecimiento) {
-    doc.text(`Dirección Establecimiento: ${emisor.dirEstablecimiento}`, x, y, { width });
-    y = doc.y + ESPACIO_LINEA;
+    lineas.push({ texto: `Dirección Establecimiento: ${emisor.dirEstablecimiento}` });
   }
-
   if (emisor.obligadoContabilidad) {
-    doc.text(`Obligado a Llevar Contabilidad: ${emisor.obligadoContabilidad}`, x, y, { width });
-    y = doc.y + ESPACIO_LINEA;
+    lineas.push({ texto: `Obligado a Llevar Contabilidad: ${emisor.obligadoContabilidad}` });
   }
-
   if (emisor.contribuyenteEspecial) {
-    doc.text(`Contribuyente Especial Nro: ${emisor.contribuyenteEspecial}`, x, y, { width });
-    y = doc.y + ESPACIO_LINEA;
+    lineas.push({ texto: `Contribuyente Especial Nro: ${emisor.contribuyenteEspecial}` });
   }
-
   if (emisor.agenteRetencion) {
-    doc.text(`Agente de Retención: ${emisor.agenteRetencion}`, x, y, { width });
-    y = doc.y + ESPACIO_LINEA;
+    lineas.push({ texto: `Agente de Retención: ${emisor.agenteRetencion}` });
   }
-
   if (emisor.contribuyenteRimpe) {
-    doc.text(`Contribuyente RIMPE: ${emisor.contribuyenteRimpe}`, x, y, { width });
-    y = doc.y + ESPACIO_LINEA;
+    lineas.push({ texto: `Contribuyente RIMPE: ${emisor.contribuyenteRimpe}` });
   }
+  return lineas;
+}
 
-  return cerrarCaja(doc, area, y);
+/** Alto real que ocupará {@link drawEmisor} en `ancho`. Para `asegurarEspacio`, antes de dibujar. */
+export function medirEmisor(doc: PDFKit.PDFDocument, emisor: EmisorRide, ancho: number): number {
+  return medirCaja(doc, lineasEmisor(emisor), ancho, emisor.logo ? ALTURA_LOGO : 0);
 }
 
 /**
@@ -238,16 +493,30 @@ export function drawComprobante(
   area: AreaRide,
   qr?: Buffer,
 ): number {
-  const cajaX = area.x + PADDING_CAJA;
-  const cajaAncho = area.width - PADDING_CAJA * 2;
-  const qrLado = 85;
-  const anchoTexto = qr ? cajaAncho - qrLado - PADDING_CELDA : cajaAncho;
+  return dibujarCaja(doc, area, lineasComprobante(doc, comprobante, area.width, qr !== undefined), {
+    dibujarExtra: qr
+      ? (x, y, anchoCaja) => doc.image(qr, x + anchoCaja - QR_LADO, y, { width: QR_LADO, height: QR_LADO })
+      : undefined,
+  });
+}
 
-  let y = iniciarCaja(area);
+/** Lado del QR de la clave de acceso dentro del bloque comprobante. */
+const QR_LADO = 85;
 
-  doc.font(FUENTE_NEGRITA).fontSize(TAMANO_TEXTO).fillColor(COLOR_TEXTO);
-  doc.text(`R.U.C.: ${comprobante.ruc}`, cajaX, y, { width: anchoTexto });
-  y = doc.y + ESPACIO_LINEA;
+/**
+ * Líneas del bloque comprobante. Cuando hay QR, las líneas de arriba se
+ * envuelven al ancho que queda a su izquierda (`anchoTexto`) y se añade un
+ * espaciador para que la clave de acceso —que va a todo el ancho— empiece
+ * SIEMPRE por debajo del QR, aunque la columna de texto sea más corta que él.
+ */
+function lineasComprobante(
+  doc: PDFKit.PDFDocument,
+  comprobante: ComprobanteRide,
+  anchoArea: number,
+  hayQr: boolean,
+): LineaCaja[] {
+  const cajaAncho = anchoArea - PADDING_CAJA * 2;
+  const anchoTexto = hayQr ? cajaAncho - QR_LADO - PADDING_CELDA : cajaAncho;
 
   // Reduce el tamaño hasta que el nombre del documento quepa en una sola
   // línea dentro de `anchoTexto` (gap de Task 2, expuesto por los nombres
@@ -258,55 +527,59 @@ export function drawComprobante(
   // "FACTURA") nunca dispara el bucle: ya cabe al tamaño máximo.
   const TAMANO_NOMBRE_DOC_MAX = TAMANO_TITULO + 2;
   let tamanoNombreDoc = TAMANO_NOMBRE_DOC_MAX;
-  doc.fontSize(tamanoNombreDoc);
+  doc.font(FUENTE_NEGRITA).fontSize(tamanoNombreDoc);
   while (doc.widthOfString(comprobante.nombreDocumento) > anchoTexto && tamanoNombreDoc > TAMANO_TEXTO) {
     tamanoNombreDoc -= 0.5;
     doc.fontSize(tamanoNombreDoc);
   }
-  doc.text(comprobante.nombreDocumento, cajaX, y, { width: anchoTexto });
-  y = doc.y + ESPACIO_LINEA;
 
-  doc.font(FUENTE_NORMAL).fontSize(TAMANO_TEXTO);
-  doc.text(`No. ${comprobante.numero}`, cajaX, y, { width: anchoTexto });
-  y = doc.y + ESPACIO_LINEA;
+  const arriba: LineaCaja[] = [
+    { texto: `R.U.C.: ${comprobante.ruc}`, negrita: true, ancho: anchoTexto },
+    { texto: comprobante.nombreDocumento, negrita: true, tamano: tamanoNombreDoc, ancho: anchoTexto },
+    { texto: `No. ${comprobante.numero}`, ancho: anchoTexto },
+  ];
 
   if (comprobante.autorizacion) {
-    doc.text(`Número de Autorización: ${comprobante.autorizacion.numero}`, cajaX, y, { width: anchoTexto });
-    y = doc.y + ESPACIO_LINEA;
-    doc.text(`Fecha y Hora de Autorización: ${comprobante.autorizacion.fecha}`, cajaX, y, { width: anchoTexto });
-    y = doc.y + ESPACIO_LINEA;
+    arriba.push({ texto: `Número de Autorización: ${comprobante.autorizacion.numero}`, ancho: anchoTexto });
+    arriba.push({ texto: `Fecha y Hora de Autorización: ${comprobante.autorizacion.fecha}`, ancho: anchoTexto });
   } else {
-    doc.font(FUENTE_NEGRITA).fillColor(COLOR_NO_AUTORIZADO);
-    doc.text('COMPROBANTE NO AUTORIZADO', cajaX, y, { width: anchoTexto });
-    doc.font(FUENTE_NORMAL).fillColor(COLOR_TEXTO);
-    y = doc.y + ESPACIO_LINEA;
+    arriba.push({
+      texto: 'COMPROBANTE NO AUTORIZADO',
+      negrita: true,
+      color: COLOR_NO_AUTORIZADO,
+      ancho: anchoTexto,
+    });
   }
 
-  doc.text(`Ambiente: ${LABEL_AMBIENTE[comprobante.ambiente]}`, cajaX, y, { width: anchoTexto });
-  y = doc.y + ESPACIO_LINEA;
+  arriba.push({ texto: `Ambiente: ${LABEL_AMBIENTE[comprobante.ambiente]}`, ancho: anchoTexto });
+  arriba.push({ texto: `Emisión: ${LABEL_TIPO_EMISION[comprobante.tipoEmision]}`, ancho: anchoTexto });
 
-  doc.text(`Emisión: ${LABEL_TIPO_EMISION[comprobante.tipoEmision]}`, cajaX, y, { width: anchoTexto });
-  y = doc.y + ESPACIO_LINEA;
-
-  // El QR se dibuja junto a la columna de texto de arriba; la clave de
-  // acceso (49 dígitos, sin espacios donde pdfkit pueda partir la línea) se
-  // imprime debajo de ambos, a todo el ancho de la caja — así nunca compite
-  // por espacio horizontal con el QR y no hay riesgo de que se corte.
-  if (qr) {
-    const qrX = cajaX + cajaAncho - qrLado;
-    const qrY = iniciarCaja(area);
-    doc.image(qr, qrX, qrY, { width: qrLado, height: qrLado });
-    y = Math.max(y, qrY + qrLado + ESPACIO_LINEA);
+  const lineas = [...arriba];
+  if (hayQr) {
+    const altoTexto = arriba.reduce((acc, linea) => acc + avanceLinea(doc, linea, cajaAncho), 0);
+    const altoQr = QR_LADO + ESPACIO_LINEA;
+    if (altoTexto < altoQr) {
+      lineas.push({ texto: '', espaciador: altoQr - altoTexto });
+    }
   }
 
-  doc.font(FUENTE_NORMAL).fontSize(TAMANO_TEXTO);
-  doc.text('Clave de Acceso:', cajaX, y, { width: cajaAncho });
-  y = doc.y;
-  doc.fontSize(TAMANO_TABLA);
-  doc.text(comprobante.claveAcceso, cajaX, y, { width: cajaAncho });
-  y = doc.y + ESPACIO_LINEA;
+  // La clave de acceso (49 dígitos, sin espacios donde pdfkit pueda partir la
+  // línea) se imprime a todo el ancho de la caja, por debajo del QR: así
+  // nunca compite por espacio horizontal con él y no hay riesgo de que se
+  // corte.
+  lineas.push({ texto: 'Clave de Acceso:' });
+  lineas.push({ texto: comprobante.claveAcceso, tamano: TAMANO_TABLA });
+  return lineas;
+}
 
-  return cerrarCaja(doc, area, y);
+/** Alto real que ocupará {@link drawComprobante} en `ancho`. Para `asegurarEspacio`, antes de dibujar. */
+export function medirComprobante(
+  doc: PDFKit.PDFDocument,
+  comprobante: ComprobanteRide,
+  ancho: number,
+  hayQr: boolean,
+): number {
+  return medirCaja(doc, lineasComprobante(doc, comprobante, ancho, hayQr), ancho);
 }
 
 /**
@@ -317,36 +590,34 @@ export function drawComprobante(
  * "Destinatario" (guía de remisión).
  */
 export function drawComprador(doc: PDFKit.PDFDocument, comprador: CompradorRide, area: AreaRide): number {
-  let y = iniciarCaja(area);
-  const x = area.x + PADDING_CAJA;
-  const width = area.width - PADDING_CAJA * 2;
-  const etiqueta = comprador.etiquetaSujeto ?? 'Comprador';
+  return dibujarCaja(doc, area, lineasComprador(comprador), { titulo: tituloComprador(comprador) });
+}
 
-  doc.font(FUENTE_NEGRITA).fontSize(TAMANO_TITULO).fillColor(COLOR_TEXTO);
-  doc.text(etiqueta.toUpperCase(), x, y, { width });
-  y = doc.y + ESPACIO_LINEA;
+/** Título del bloque comprador, ya en mayúsculas ("COMPRADOR", "PROVEEDOR", "DESTINATARIO", ...). */
+function tituloComprador(comprador: CompradorRide): string {
+  return (comprador.etiquetaSujeto ?? 'Comprador').toUpperCase();
+}
 
-  doc.font(FUENTE_NORMAL).fontSize(TAMANO_TEXTO);
-  doc.text(`Razón Social / Nombres: ${comprador.razonSocial}`, x, y, { width });
-  y = doc.y + ESPACIO_LINEA;
-
-  doc.text(`Identificación: ${comprador.identificacion}`, x, y, { width });
-  y = doc.y + ESPACIO_LINEA;
-
-  doc.text(`Fecha Emisión: ${comprador.fechaEmision}`, x, y, { width });
-  y = doc.y + ESPACIO_LINEA;
-
+/** Líneas del bloque comprador, en el orden en que se imprimen. */
+function lineasComprador(comprador: CompradorRide): LineaCaja[] {
+  const lineas: LineaCaja[] = [
+    { texto: tituloComprador(comprador), negrita: true, tamano: TAMANO_TITULO },
+    { texto: `Razón Social / Nombres: ${comprador.razonSocial}` },
+    { texto: `Identificación: ${comprador.identificacion}` },
+    { texto: `Fecha Emisión: ${comprador.fechaEmision}` },
+  ];
   if (comprador.direccion) {
-    doc.text(`Dirección: ${comprador.direccion}`, x, y, { width });
-    y = doc.y + ESPACIO_LINEA;
+    lineas.push({ texto: `Dirección: ${comprador.direccion}` });
   }
-
   if (comprador.guiaRemision) {
-    doc.text(`Guía de Remisión: ${comprador.guiaRemision}`, x, y, { width });
-    y = doc.y + ESPACIO_LINEA;
+    lineas.push({ texto: `Guía de Remisión: ${comprador.guiaRemision}` });
   }
+  return lineas;
+}
 
-  return cerrarCaja(doc, area, y);
+/** Alto real que ocupará {@link drawComprador} en `ancho`. Para `asegurarEspacio`, antes de dibujar. */
+export function medirComprador(doc: PDFKit.PDFDocument, comprador: CompradorRide, ancho: number): number {
+  return medirCaja(doc, lineasComprador(comprador), ancho);
 }
 
 export interface ColumnaTabla {
@@ -413,13 +684,32 @@ function celdasDetalle(d: Detalle): string[] {
   ];
 }
 
+/** Deja `doc` con la fuente de una fila de tabla (el encabezado va en negrita). */
+function fuenteFilaTabla(doc: PDFKit.PDFDocument, esEncabezado: boolean): void {
+  doc.font(esEncabezado ? FUENTE_NEGRITA : FUENTE_NORMAL).fontSize(TAMANO_TABLA).fillColor(COLOR_TEXTO);
+}
+
 /** Altura que ocupará la fila (la celda más alta, según el wrap de cada columna) más el padding de celda. */
-function alturaFilaTabla(doc: PDFKit.PDFDocument, columnas: ColumnaTabla[], celdas: string[]): number {
+function alturaFilaTabla(
+  doc: PDFKit.PDFDocument,
+  columnas: ColumnaTabla[],
+  celdas: string[],
+  esEncabezado: boolean,
+): number {
+  fuenteFilaTabla(doc, esEncabezado);
   const alturas = columnas.map((col, i) => doc.heightOfString(celdas[i], { width: col.width - PADDING_CELDA * 2 }));
   return Math.max(...alturas) + PADDING_CELDA * 2;
 }
 
-/** Dibuja una fila (encabezado o dato) con sus bordes y devuelve el `y` de su borde inferior. */
+/**
+ * Dibuja una fila (encabezado o dato) con sus bordes y devuelve el `y` de su
+ * borde inferior. Las celdas se escriben con {@link escribirTexto}, así que la
+ * fila NUNCA se parte sola entre dos páginas: si no cabe, es
+ * {@link drawTablaGenerica} quien decide dónde va. Antes, una descripción
+ * larga hacía que pdfkit paginara a mitad de fila y las columnas de importes
+ * (escritas después) quedaban en la página siguiente, huérfanas y fuera del
+ * rectángulo de su propia fila.
+ */
 function dibujarFilaTabla(
   doc: PDFKit.PDFDocument,
   columnas: ColumnaTabla[],
@@ -428,8 +718,7 @@ function dibujarFilaTabla(
   y: number,
   esEncabezado: boolean,
 ): number {
-  doc.font(esEncabezado ? FUENTE_NEGRITA : FUENTE_NORMAL).fontSize(TAMANO_TABLA);
-  const alto = alturaFilaTabla(doc, columnas, celdas);
+  const alto = alturaFilaTabla(doc, columnas, celdas, esEncabezado);
   const anchoTotal = columnas.reduce((s, c) => s + c.width, 0);
 
   if (esEncabezado) {
@@ -437,9 +726,10 @@ function dibujarFilaTabla(
     doc.fillColor(COLOR_TEXTO);
   }
 
+  fuenteFilaTabla(doc, esEncabezado);
   let cx = x;
   for (let i = 0; i < columnas.length; i++) {
-    doc.text(celdas[i], cx + PADDING_CELDA, y + PADDING_CELDA, {
+    escribirTexto(doc, celdas[i], cx + PADDING_CELDA, y + PADDING_CELDA, {
       width: columnas[i].width - PADDING_CELDA * 2,
       align: columnas[i].align,
     });
@@ -460,6 +750,55 @@ function dibujarFilaTabla(
 }
 
 /**
+ * Fila más alta que una página entera (p.ej. una descripción de 120 líneas):
+ * se parte DELIBERADAMENTE en sub-filas, cada una con su encabezado repetido
+ * arriba y su propio rectángulo cerrado. El primer trozo lleva las celdas
+ * cortas (cantidad, precios, totales), así que los importes van siempre en la
+ * misma página que el principio de su descripción.
+ */
+function dibujarFilaEnVariasPaginas(
+  doc: PDFKit.PDFDocument,
+  columnas: ColumnaTabla[],
+  encabezados: string[],
+  celdas: string[],
+  x: number,
+  y: number,
+  altoEncabezado: number,
+): number {
+  // Arranca en una página nueva (salvo que la actual esté recién abierta con
+  // solo el encabezado): así todas las sub-filas tienen el mismo presupuesto
+  // de alto y el reparto no depende de dónde venía la tabla.
+  let yFila = y;
+  if (yFila > doc.page.margins.top + altoEncabezado) {
+    doc.addPage();
+    yFila = dibujarFilaTabla(doc, columnas, encabezados, x, doc.page.margins.top, true);
+  }
+
+  const presupuesto = alturaUtilPagina(doc) - altoEncabezado - PADDING_CELDA * 2;
+  fuenteFilaTabla(doc, false);
+  const trozos = columnas.map((col, i) =>
+    partirTextoPorAltura(doc, celdas[i], col.width - PADDING_CELDA * 2, presupuesto),
+  );
+  const subFilas = Math.max(...trozos.map((t) => t.length));
+
+  for (let s = 0; s < subFilas; s++) {
+    if (s > 0) {
+      doc.addPage();
+      yFila = dibujarFilaTabla(doc, columnas, encabezados, x, doc.page.margins.top, true);
+    }
+    yFila = dibujarFilaTabla(
+      doc,
+      columnas,
+      trozos.map((t) => t[s] ?? ''),
+      x,
+      yFila,
+      false,
+    );
+  }
+  return yFila;
+}
+
+/**
  * Tabla genérica: encabezado + filas de celdas ya formateadas (strings), con
  * paginación fila a fila (repite el encabezado al saltar de página, ver
  * {@link asegurarEspacio}). Es el motor que {@link drawTablaDetalles} usa
@@ -477,21 +816,33 @@ export function drawTablaGenerica(
   area: AreaRide,
 ): number {
   const encabezados = columnas.map((c) => c.header);
-  let y = area.y;
+  const altoEncabezado = alturaFilaTabla(doc, columnas, encabezados, true);
+
+  // A diferencia de los bloques con borde, la tabla reserva su propio espacio:
+  // ya es dueña de su paginación fila a fila, así que los `*.ride.ts` no
+  // necesitan (ni pueden) adivinar su alto. Reserva encabezado + primera fila
+  // para no dejar nunca un encabezado solo al pie de una página.
+  const altoPrimeraFila = filas.length > 0 ? alturaFilaTabla(doc, columnas, filas[0], false) : 0;
+  let y = asegurarEspacio(doc, area.y, Math.min(altoEncabezado + altoPrimeraFila, alturaUtilPagina(doc)));
   y = dibujarFilaTabla(doc, columnas, encabezados, area.x, y, true);
 
   for (const fila of filas) {
-    doc.font(FUENTE_NORMAL).fontSize(TAMANO_TABLA);
-    const alto = alturaFilaTabla(doc, columnas, fila);
+    const alto = alturaFilaTabla(doc, columnas, fila, false);
 
-    const paginasAntes = doc.bufferedPageRange().count;
-    y = asegurarEspacio(doc, y, alto);
-    if (doc.bufferedPageRange().count > paginasAntes) {
-      // asegurarEspacio saltó de página: redibuja el encabezado antes de la fila.
-      y = dibujarFilaTabla(doc, columnas, encabezados, area.x, y, true);
+    if (y + alto <= limiteInferior(doc)) {
+      y = dibujarFilaTabla(doc, columnas, fila, area.x, y, false);
+      continue;
     }
 
-    y = dibujarFilaTabla(doc, columnas, fila, area.x, y, false);
+    if (altoEncabezado + alto <= alturaUtilPagina(doc)) {
+      // Cabe entera en una página: salta y repite el encabezado antes de la fila.
+      doc.addPage();
+      y = dibujarFilaTabla(doc, columnas, encabezados, area.x, doc.page.margins.top, true);
+      y = dibujarFilaTabla(doc, columnas, fila, area.x, y, false);
+      continue;
+    }
+
+    y = dibujarFilaEnVariasPaginas(doc, columnas, encabezados, fila, area.x, y, altoEncabezado);
   }
 
   return y;
@@ -538,65 +889,68 @@ function sumarValorPorCodigo(impuestos: TotalImpuesto[], codigo: string): number
  * sobre los montos.
  */
 export function drawTotales(doc: PDFKit.PDFDocument, totales: TotalesRide, area: AreaRide): number {
-  let y = iniciarCaja(area);
-  const x = area.x + PADDING_CAJA;
-  const width = area.width - PADDING_CAJA * 2;
+  return dibujarCaja(doc, area, lineasTotales(totales), { titulo: TITULO_TOTALES });
+}
 
-  doc.font(FUENTE_NEGRITA).fontSize(TAMANO_TITULO).fillColor(COLOR_TEXTO);
-  doc.text('TOTALES', x, y, { width });
-  y = doc.y + ESPACIO_LINEA;
+const TITULO_TOTALES = 'TOTALES';
 
-  doc.font(FUENTE_NORMAL).fontSize(TAMANO_TEXTO);
+/** Líneas del bloque totales, en el orden en que se imprimen. */
+function lineasTotales(totales: TotalesRide): LineaCaja[] {
+  const lineas: LineaCaja[] = [{ texto: TITULO_TOTALES, negrita: true, tamano: TAMANO_TITULO }];
 
   for (const subtotal of subtotalesIva(totales.impuestos)) {
-    y = escribirLinea(doc, x, y, width, subtotal.etiqueta, formatMonto(subtotal.base, 2));
+    lineas.push({ texto: subtotal.etiqueta, valor: formatMonto(subtotal.base, 2) });
   }
 
-  y = escribirLinea(doc, x, y, width, 'Subtotal sin impuestos', formatMonto(totales.totalSinImpuestos, 2));
+  lineas.push({ texto: 'Subtotal sin impuestos', valor: formatMonto(totales.totalSinImpuestos, 2) });
 
   if (totales.totalDescuento !== undefined) {
-    y = escribirLinea(doc, x, y, width, 'Total descuento', formatMonto(totales.totalDescuento, 2));
+    lineas.push({ texto: 'Total descuento', valor: formatMonto(totales.totalDescuento, 2) });
   }
 
   const ice = sumarValorPorCodigo(totales.impuestos, CODIGO_IMPUESTO_ICE);
   if (ice > 0) {
-    y = escribirLinea(doc, x, y, width, 'ICE', fromCents(ice));
+    lineas.push({ texto: 'ICE', valor: fromCents(ice) });
   }
 
   const iva = sumarValorPorCodigo(totales.impuestos, CODIGO_IMPUESTO_IVA);
-  y = escribirLinea(doc, x, y, width, 'IVA', fromCents(iva));
+  lineas.push({ texto: 'IVA', valor: fromCents(iva) });
 
   if (totales.propina) {
-    y = escribirLinea(doc, x, y, width, 'Propina', formatMonto(totales.propina, 2));
+    lineas.push({ texto: 'Propina', valor: formatMonto(totales.propina, 2) });
   }
 
-  doc.font(FUENTE_NEGRITA);
-  y = escribirLinea(doc, x, y, width, 'VALOR TOTAL', formatMonto(totales.importeTotal, 2));
-  doc.font(FUENTE_NORMAL);
+  lineas.push({ texto: 'VALOR TOTAL', valor: formatMonto(totales.importeTotal, 2), negrita: true });
+  return lineas;
+}
 
-  return cerrarCaja(doc, area, y);
+/** Alto real que ocupará {@link drawTotales} en `ancho`. Para `asegurarEspacio`, antes de dibujar. */
+export function medirTotales(doc: PDFKit.PDFDocument, totales: TotalesRide, ancho: number): number {
+  return medirCaja(doc, lineasTotales(totales), ancho);
 }
 
 /** Bloque formas de pago: forma de pago, valor, plazo y unidad de tiempo (los últimos dos, si vienen). */
 export function drawFormasPago(doc: PDFKit.PDFDocument, pagos: Pago[], area: AreaRide): number {
-  let y = iniciarCaja(area);
-  const x = area.x + PADDING_CAJA;
-  const width = area.width - PADDING_CAJA * 2;
+  return dibujarCaja(doc, area, lineasFormasPago(pagos), { titulo: TITULO_FORMAS_PAGO });
+}
 
-  doc.font(FUENTE_NEGRITA).fontSize(TAMANO_TITULO).fillColor(COLOR_TEXTO);
-  doc.text('FORMAS DE PAGO', x, y, { width });
-  y = doc.y + ESPACIO_LINEA;
+const TITULO_FORMAS_PAGO = 'FORMAS DE PAGO';
 
-  doc.font(FUENTE_NORMAL).fontSize(TAMANO_TEXTO);
+/** Líneas del bloque formas de pago, en el orden en que se imprimen. */
+function lineasFormasPago(pagos: Pago[]): LineaCaja[] {
+  const lineas: LineaCaja[] = [{ texto: TITULO_FORMAS_PAGO, negrita: true, tamano: TAMANO_TITULO }];
   for (const pago of pagos) {
     const partes = [LABEL_FORMA_PAGO[pago.formaPago] ?? pago.formaPago, formatMonto(pago.total, 2)];
     if (pago.plazo) partes.push(`Plazo: ${pago.plazo}`);
     if (pago.unidadTiempo) partes.push(`Unidad de Tiempo: ${pago.unidadTiempo}`);
-    doc.text(partes.join('   —   '), x, y, { width });
-    y = doc.y + ESPACIO_LINEA;
+    lineas.push({ texto: partes.join('   —   ') });
   }
+  return lineas;
+}
 
-  return cerrarCaja(doc, area, y);
+/** Alto real que ocupará {@link drawFormasPago} en `ancho`. Para `asegurarEspacio`, antes de dibujar. */
+export function medirFormasPago(doc: PDFKit.PDFDocument, pagos: Pago[], ancho: number): number {
+  return medirCaja(doc, lineasFormasPago(pagos), ancho);
 }
 
 /**
@@ -609,26 +963,35 @@ export function drawInfoAdicional(
   infoAdicional: Record<string, string> | undefined,
   area: AreaRide,
 ): number {
-  const entradas = infoAdicional ? Object.entries(infoAdicional) : [];
-  if (entradas.length === 0) {
+  const lineas = lineasInfoAdicional(infoAdicional);
+  if (lineas.length === 0) {
     return area.y;
   }
+  return dibujarCaja(doc, area, lineas, { titulo: TITULO_INFO_ADICIONAL });
+}
 
-  let y = iniciarCaja(area);
-  const x = area.x + PADDING_CAJA;
-  const width = area.width - PADDING_CAJA * 2;
+const TITULO_INFO_ADICIONAL = 'INFORMACIÓN ADICIONAL';
 
-  doc.font(FUENTE_NEGRITA).fontSize(TAMANO_TITULO).fillColor(COLOR_TEXTO);
-  doc.text('INFORMACIÓN ADICIONAL', x, y, { width });
-  y = doc.y + ESPACIO_LINEA;
-
-  doc.font(FUENTE_NORMAL).fontSize(TAMANO_TEXTO);
-  for (const [clave, valor] of entradas) {
-    doc.text(`${clave}: ${valor}`, x, y, { width });
-    y = doc.y + ESPACIO_LINEA;
+/** Líneas del bloque información adicional; vacío (sin ni siquiera el título) si no hay campos. */
+function lineasInfoAdicional(infoAdicional: Record<string, string> | undefined): LineaCaja[] {
+  const entradas = infoAdicional ? Object.entries(infoAdicional) : [];
+  if (entradas.length === 0) {
+    return [];
   }
+  return [
+    { texto: TITULO_INFO_ADICIONAL, negrita: true, tamano: TAMANO_TITULO },
+    ...entradas.map(([clave, valor]) => ({ texto: `${clave}: ${valor}` })),
+  ];
+}
 
-  return cerrarCaja(doc, area, y);
+/** Alto real que ocupará {@link drawInfoAdicional} en `ancho` (0 si no hay campos). */
+export function medirInfoAdicional(
+  doc: PDFKit.PDFDocument,
+  infoAdicional: Record<string, string> | undefined,
+  ancho: number,
+): number {
+  const lineas = lineasInfoAdicional(infoAdicional);
+  return lineas.length === 0 ? 0 : medirCaja(doc, lineas, ancho);
 }
 
 /**
@@ -642,19 +1005,23 @@ export function drawInfoAdicional(
  * reimplementar el patrón de caja con título + líneas por cada tipo.
  */
 export function drawBloqueTexto(doc: PDFKit.PDFDocument, titulo: string, lineas: string[], area: AreaRide): number {
-  let y = iniciarCaja(area);
-  const x = area.x + PADDING_CAJA;
-  const width = area.width - PADDING_CAJA * 2;
+  return dibujarCaja(doc, area, lineasBloqueTexto(titulo, lineas), { titulo });
+}
 
-  doc.font(FUENTE_NEGRITA).fontSize(TAMANO_TITULO).fillColor(COLOR_TEXTO);
-  doc.text(titulo, x, y, { width });
-  y = doc.y + ESPACIO_LINEA;
+/** Líneas del bloque genérico: título en negrita + una línea por cada texto. */
+function lineasBloqueTexto(titulo: string, lineas: string[]): LineaCaja[] {
+  return [
+    { texto: titulo, negrita: true, tamano: TAMANO_TITULO },
+    ...lineas.map((texto) => ({ texto })),
+  ];
+}
 
-  doc.font(FUENTE_NORMAL).fontSize(TAMANO_TEXTO);
-  for (const linea of lineas) {
-    doc.text(linea, x, y, { width });
-    y = doc.y + ESPACIO_LINEA;
-  }
-
-  return cerrarCaja(doc, area, y);
+/** Alto real que ocupará {@link drawBloqueTexto} en `ancho`. Para `asegurarEspacio`, antes de dibujar. */
+export function medirBloqueTexto(
+  doc: PDFKit.PDFDocument,
+  titulo: string,
+  lineas: string[],
+  ancho: number,
+): number {
+  return medirCaja(doc, lineasBloqueTexto(titulo, lineas), ancho);
 }

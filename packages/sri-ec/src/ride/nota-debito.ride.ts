@@ -5,6 +5,7 @@ import { formatMonto } from 'sri-ec';
 import {
   asegurarEspacio,
   construirColumnas,
+  drawBloquesEnFila,
   drawComprador,
   drawComprobante,
   drawEmisor,
@@ -13,11 +14,17 @@ import {
   drawTablaGenerica,
   drawTotales,
   formatNumeroComprobante,
+  medirComprador,
+  medirComprobante,
+  medirEmisor,
+  medirFormasPago,
+  medirInfoAdicional,
+  medirTotales,
   nombreDocumento,
 } from './blocks.js';
 import { crearDocumentoRide } from './pdf-doc.js';
 import { generarQr } from './qr.js';
-import type { AreaRide, ComprobanteRide, CompradorRide, EmisorRide, RideOptions, TotalesRide } from './types.js';
+import type { ComprobanteRide, CompradorRide, EmisorRide, RideOptions, TotalesRide } from './types.js';
 
 /** Separación vertical entre bloques apilados. */
 const ESPACIADO_BLOQUE = 10;
@@ -68,9 +75,6 @@ export async function generarRideNotaDebito(opciones: RideOptions<NotaDebito>): 
     agenteRetencion: documento.infoTributaria.agenteRetencion,
     contribuyenteRimpe: documento.infoTributaria.contribuyenteRimpe,
   };
-  const areaEmisor: AreaRide = { x: margenX, y, width: anchoEmisor };
-  const yEmisor = drawEmisor(doc, emisor, areaEmisor);
-
   const comprobante: ComprobanteRide = {
     ruc: documento.infoTributaria.ruc,
     nombreDocumento: nombreDocumento(documento.tipo),
@@ -80,10 +84,17 @@ export async function generarRideNotaDebito(opciones: RideOptions<NotaDebito>): 
     claveAcceso,
     autorizacion,
   };
-  const areaComprobante: AreaRide = { x: margenX + anchoEmisor, y, width: anchoComprobante };
-  const yComprobante = drawComprobante(doc, comprobante, areaComprobante, qr);
-
-  y = Math.max(yEmisor, yComprobante) + ESPACIADO_BLOQUE;
+  y =
+    drawBloquesEnFila(
+      doc,
+      y,
+      medirEmisor(doc, emisor, anchoEmisor),
+      medirComprobante(doc, comprobante, anchoComprobante, qr !== undefined),
+      (yFila) => drawEmisor(doc, emisor, { x: margenX, y: yFila, width: anchoEmisor }),
+      (yFila) =>
+        drawComprobante(doc, comprobante, { x: margenX + anchoEmisor, y: yFila, width: anchoComprobante }, qr),
+      ESPACIADO_BLOQUE,
+    ) + ESPACIADO_BLOQUE;
 
   // Comprador.
   const comprador: CompradorRide = {
@@ -91,11 +102,11 @@ export async function generarRideNotaDebito(opciones: RideOptions<NotaDebito>): 
     identificacion: documento.identificacionComprador,
     fechaEmision: documento.fechaEmision,
   };
-  y = asegurarEspacio(doc, y, 40);
+  y = asegurarEspacio(doc, y, medirComprador(doc, comprador, anchoUtil));
   y = drawComprador(doc, comprador, { x: margenX, y, width: anchoUtil }) + ESPACIADO_BLOQUE;
 
-  // Motivos (razón/valor) — reemplaza al detalle, que este comprobante no tiene.
-  y = asegurarEspacio(doc, y, 30);
+  // Motivos (razón/valor) — reemplaza al detalle, que este comprobante no
+  // tiene. `drawTablaGenerica` reserva su propio espacio.
   const columnasMotivos = construirColumnas(anchoUtil, MOTIVO_COLUMN_SPECS);
   const filasMotivos = documento.motivos.map((motivo) => [motivo.razon, formatMonto(motivo.valor, 2)]);
   y = drawTablaGenerica(doc, columnasMotivos, filasMotivos, { x: margenX, y, width: anchoUtil }) + ESPACIADO_BLOQUE;
@@ -110,13 +121,19 @@ export async function generarRideNotaDebito(opciones: RideOptions<NotaDebito>): 
     importeTotal: documento.valorTotal,
   };
 
-  y = asegurarEspacio(doc, y, 40);
-  const yFormasPago = drawFormasPago(doc, documento.pagos, { x: margenX, y, width: anchoFormasPago });
-  const yTotales = drawTotales(doc, totales, { x: margenX + anchoFormasPago, y, width: anchoTotales });
-  y = Math.max(yFormasPago, yTotales) + ESPACIADO_BLOQUE;
+  y =
+    drawBloquesEnFila(
+      doc,
+      y,
+      medirFormasPago(doc, documento.pagos, anchoFormasPago),
+      medirTotales(doc, totales, anchoTotales),
+      (yFila) => drawFormasPago(doc, documento.pagos, { x: margenX, y: yFila, width: anchoFormasPago }),
+      (yFila) => drawTotales(doc, totales, { x: margenX + anchoFormasPago, y: yFila, width: anchoTotales }),
+      ESPACIADO_BLOQUE,
+    ) + ESPACIADO_BLOQUE;
 
   // Información adicional.
-  y = asegurarEspacio(doc, y, 20);
+  y = asegurarEspacio(doc, y, medirInfoAdicional(doc, documento.infoAdicional, anchoUtil));
   drawInfoAdicional(doc, documento.infoAdicional, { x: margenX, y, width: anchoUtil });
 
   return finalizar();

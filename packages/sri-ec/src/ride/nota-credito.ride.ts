@@ -3,6 +3,7 @@ import type { NotaCredito } from '../documents/index.js';
 import {
   asegurarEspacio,
   drawBloqueTexto,
+  drawBloquesEnFila,
   drawComprador,
   drawComprobante,
   drawEmisor,
@@ -10,11 +11,17 @@ import {
   drawTablaDetalles,
   drawTotales,
   formatNumeroComprobante,
+  medirBloqueTexto,
+  medirComprador,
+  medirComprobante,
+  medirEmisor,
+  medirInfoAdicional,
+  medirTotales,
   nombreDocumento,
 } from './blocks.js';
 import { crearDocumentoRide } from './pdf-doc.js';
 import { generarQr } from './qr.js';
-import type { AreaRide, ComprobanteRide, CompradorRide, EmisorRide, RideOptions, TotalesRide } from './types.js';
+import type { ComprobanteRide, CompradorRide, EmisorRide, RideOptions, TotalesRide } from './types.js';
 
 /** Separación vertical entre bloques apilados. */
 const ESPACIADO_BLOQUE = 10;
@@ -30,6 +37,9 @@ const PROPORCION_EMISOR = 0.55;
  * `TipoComprobante` válido, sin rama `default`, y lanzaría en tiempo de
  * ejecución ante un código desconocido).
  */
+/** Título del bloque propio de la nota de crédito. */
+const TITULO_MODIFICA = 'COMPROBANTE QUE MODIFICA';
+
 const NOMBRE_POR_COD_DOC: Record<string, string> = {
   [TipoComprobante.Factura]: 'Factura',
   [TipoComprobante.LiquidacionCompra]: 'Liquidación de Compra',
@@ -76,9 +86,6 @@ export async function generarRideNotaCredito(opciones: RideOptions<NotaCredito>)
     agenteRetencion: documento.infoTributaria.agenteRetencion,
     contribuyenteRimpe: documento.infoTributaria.contribuyenteRimpe,
   };
-  const areaEmisor: AreaRide = { x: margenX, y, width: anchoEmisor };
-  const yEmisor = drawEmisor(doc, emisor, areaEmisor);
-
   const comprobante: ComprobanteRide = {
     ruc: documento.infoTributaria.ruc,
     nombreDocumento: nombreDocumento(documento.tipo),
@@ -88,10 +95,17 @@ export async function generarRideNotaCredito(opciones: RideOptions<NotaCredito>)
     claveAcceso,
     autorizacion,
   };
-  const areaComprobante: AreaRide = { x: margenX + anchoEmisor, y, width: anchoComprobante };
-  const yComprobante = drawComprobante(doc, comprobante, areaComprobante, qr);
-
-  y = Math.max(yEmisor, yComprobante) + ESPACIADO_BLOQUE;
+  y =
+    drawBloquesEnFila(
+      doc,
+      y,
+      medirEmisor(doc, emisor, anchoEmisor),
+      medirComprobante(doc, comprobante, anchoComprobante, qr !== undefined),
+      (yFila) => drawEmisor(doc, emisor, { x: margenX, y: yFila, width: anchoEmisor }),
+      (yFila) =>
+        drawComprobante(doc, comprobante, { x: margenX + anchoEmisor, y: yFila, width: anchoComprobante }, qr),
+      ESPACIADO_BLOQUE,
+    ) + ESPACIADO_BLOQUE;
 
   // Comprador.
   const comprador: CompradorRide = {
@@ -99,27 +113,21 @@ export async function generarRideNotaCredito(opciones: RideOptions<NotaCredito>)
     identificacion: documento.identificacionComprador,
     fechaEmision: documento.fechaEmision,
   };
-  y = asegurarEspacio(doc, y, 40);
+  y = asegurarEspacio(doc, y, medirComprador(doc, comprador, anchoUtil));
   y = drawComprador(doc, comprador, { x: margenX, y, width: anchoUtil }) + ESPACIADO_BLOQUE;
 
   // Comprobante que modifica + motivo.
   const nombreModificado = NOMBRE_POR_COD_DOC[documento.codDocModificado] ?? documento.codDocModificado;
-  y = asegurarEspacio(doc, y, 60);
-  y =
-    drawBloqueTexto(
-      doc,
-      'COMPROBANTE QUE MODIFICA',
-      [
-        `Tipo de Comprobante Modificado: ${documento.codDocModificado} - ${nombreModificado}`,
-        `Número de Comprobante Modificado: ${documento.numDocModificado}`,
-        `Fecha de Emisión del Comprobante Sustento: ${documento.fechaEmisionDocSustento}`,
-        `Motivo: ${documento.motivo}`,
-      ],
-      { x: margenX, y, width: anchoUtil },
-    ) + ESPACIADO_BLOQUE;
+  const lineasModifica = [
+    `Tipo de Comprobante Modificado: ${documento.codDocModificado} - ${nombreModificado}`,
+    `Número de Comprobante Modificado: ${documento.numDocModificado}`,
+    `Fecha de Emisión del Comprobante Sustento: ${documento.fechaEmisionDocSustento}`,
+    `Motivo: ${documento.motivo}`,
+  ];
+  y = asegurarEspacio(doc, y, medirBloqueTexto(doc, TITULO_MODIFICA, lineasModifica, anchoUtil));
+  y = drawBloqueTexto(doc, TITULO_MODIFICA, lineasModifica, { x: margenX, y, width: anchoUtil }) + ESPACIADO_BLOQUE;
 
-  // Detalle.
-  y = asegurarEspacio(doc, y, 30);
+  // Detalle (`drawTablaDetalles` reserva su propio espacio: es dueña de su paginación fila a fila).
   y = drawTablaDetalles(doc, documento.detalles, { x: margenX, y, width: anchoUtil }) + ESPACIADO_BLOQUE;
 
   // Totales (ancho completo: NotaCredito no tiene `pagos`, así que no comparte
@@ -129,11 +137,11 @@ export async function generarRideNotaCredito(opciones: RideOptions<NotaCredito>)
     totalSinImpuestos: documento.totalSinImpuestos,
     importeTotal: documento.valorModificacion,
   };
-  y = asegurarEspacio(doc, y, 40);
+  y = asegurarEspacio(doc, y, medirTotales(doc, totales, anchoUtil));
   y = drawTotales(doc, totales, { x: margenX, y, width: anchoUtil }) + ESPACIADO_BLOQUE;
 
   // Información adicional.
-  y = asegurarEspacio(doc, y, 20);
+  y = asegurarEspacio(doc, y, medirInfoAdicional(doc, documento.infoAdicional, anchoUtil));
   drawInfoAdicional(doc, documento.infoAdicional, { x: margenX, y, width: anchoUtil });
 
   return finalizar();

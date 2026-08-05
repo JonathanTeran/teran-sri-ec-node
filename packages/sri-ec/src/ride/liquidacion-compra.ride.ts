@@ -2,6 +2,7 @@ import { TipoEmision } from '../catalogs/index.js';
 import type { LiquidacionCompra } from '../documents/index.js';
 import {
   asegurarEspacio,
+  drawBloquesEnFila,
   drawComprador,
   drawComprobante,
   drawEmisor,
@@ -10,11 +11,17 @@ import {
   drawTablaDetalles,
   drawTotales,
   formatNumeroComprobante,
+  medirComprador,
+  medirComprobante,
+  medirEmisor,
+  medirFormasPago,
+  medirInfoAdicional,
+  medirTotales,
   nombreDocumento,
 } from './blocks.js';
 import { crearDocumentoRide } from './pdf-doc.js';
 import { generarQr } from './qr.js';
-import type { AreaRide, ComprobanteRide, CompradorRide, EmisorRide, RideOptions, TotalesRide } from './types.js';
+import type { ComprobanteRide, CompradorRide, EmisorRide, RideOptions, TotalesRide } from './types.js';
 
 /** Separación vertical entre bloques apilados. */
 const ESPACIADO_BLOQUE = 10;
@@ -59,9 +66,6 @@ export async function generarRideLiquidacionCompra(opciones: RideOptions<Liquida
     agenteRetencion: documento.infoTributaria.agenteRetencion,
     contribuyenteRimpe: documento.infoTributaria.contribuyenteRimpe,
   };
-  const areaEmisor: AreaRide = { x: margenX, y, width: anchoEmisor };
-  const yEmisor = drawEmisor(doc, emisor, areaEmisor);
-
   const comprobante: ComprobanteRide = {
     ruc: documento.infoTributaria.ruc,
     nombreDocumento: nombreDocumento(documento.tipo),
@@ -71,10 +75,17 @@ export async function generarRideLiquidacionCompra(opciones: RideOptions<Liquida
     claveAcceso,
     autorizacion,
   };
-  const areaComprobante: AreaRide = { x: margenX + anchoEmisor, y, width: anchoComprobante };
-  const yComprobante = drawComprobante(doc, comprobante, areaComprobante, qr);
-
-  y = Math.max(yEmisor, yComprobante) + ESPACIADO_BLOQUE;
+  y =
+    drawBloquesEnFila(
+      doc,
+      y,
+      medirEmisor(doc, emisor, anchoEmisor),
+      medirComprobante(doc, comprobante, anchoComprobante, qr !== undefined),
+      (yFila) => drawEmisor(doc, emisor, { x: margenX, y: yFila, width: anchoEmisor }),
+      (yFila) =>
+        drawComprobante(doc, comprobante, { x: margenX + anchoEmisor, y: yFila, width: anchoComprobante }, qr),
+      ESPACIADO_BLOQUE,
+    ) + ESPACIADO_BLOQUE;
 
   // Proveedor: mismo bloque "comprador", etiqueta cambiada.
   const proveedor: CompradorRide = {
@@ -84,11 +95,10 @@ export async function generarRideLiquidacionCompra(opciones: RideOptions<Liquida
     fechaEmision: documento.fechaEmision,
     direccion: documento.direccionProveedor,
   };
-  y = asegurarEspacio(doc, y, 40);
+  y = asegurarEspacio(doc, y, medirComprador(doc, proveedor, anchoUtil));
   y = drawComprador(doc, proveedor, { x: margenX, y, width: anchoUtil }) + ESPACIADO_BLOQUE;
 
-  // Detalle.
-  y = asegurarEspacio(doc, y, 30);
+  // Detalle (`drawTablaDetalles` reserva su propio espacio: es dueña de su paginación fila a fila).
   y = drawTablaDetalles(doc, documento.detalles, { x: margenX, y, width: anchoUtil }) + ESPACIADO_BLOQUE;
 
   // Formas de pago (izquierda) + totales (derecha), misma fila.
@@ -102,13 +112,19 @@ export async function generarRideLiquidacionCompra(opciones: RideOptions<Liquida
     importeTotal: documento.importeTotal,
   };
 
-  y = asegurarEspacio(doc, y, 40);
-  const yFormasPago = drawFormasPago(doc, documento.pagos, { x: margenX, y, width: anchoFormasPago });
-  const yTotales = drawTotales(doc, totales, { x: margenX + anchoFormasPago, y, width: anchoTotales });
-  y = Math.max(yFormasPago, yTotales) + ESPACIADO_BLOQUE;
+  y =
+    drawBloquesEnFila(
+      doc,
+      y,
+      medirFormasPago(doc, documento.pagos, anchoFormasPago),
+      medirTotales(doc, totales, anchoTotales),
+      (yFila) => drawFormasPago(doc, documento.pagos, { x: margenX, y: yFila, width: anchoFormasPago }),
+      (yFila) => drawTotales(doc, totales, { x: margenX + anchoFormasPago, y: yFila, width: anchoTotales }),
+      ESPACIADO_BLOQUE,
+    ) + ESPACIADO_BLOQUE;
 
   // Información adicional.
-  y = asegurarEspacio(doc, y, 20);
+  y = asegurarEspacio(doc, y, medirInfoAdicional(doc, documento.infoAdicional, anchoUtil));
   drawInfoAdicional(doc, documento.infoAdicional, { x: margenX, y, width: anchoUtil });
 
   return finalizar();

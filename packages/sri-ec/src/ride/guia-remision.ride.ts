@@ -6,22 +6,32 @@ import {
   asegurarEspacio,
   construirColumnas,
   drawBloqueTexto,
+  drawBloquesEnFila,
   drawComprador,
   drawComprobante,
   drawEmisor,
   drawInfoAdicional,
   drawTablaGenerica,
   formatNumeroComprobante,
+  medirBloqueTexto,
+  medirComprador,
+  medirComprobante,
+  medirEmisor,
+  medirInfoAdicional,
   nombreDocumento,
 } from './blocks.js';
 import { crearDocumentoRide } from './pdf-doc.js';
 import { generarQr } from './qr.js';
-import type { AreaRide, ComprobanteRide, CompradorRide, EmisorRide, RideOptions } from './types.js';
+import type { ComprobanteRide, CompradorRide, EmisorRide, RideOptions } from './types.js';
 
 /** Separación vertical entre bloques apilados. */
 const ESPACIADO_BLOQUE = 10;
 /** Proporción del ancho útil que ocupa la columna del emisor en la cabecera (el resto es "comprobante"). */
 const PROPORCION_EMISOR = 0.55;
+
+/** Títulos de los dos bloques de texto propios de la guía de remisión. */
+const TITULO_TRANSPORTISTA = 'TRANSPORTISTA';
+const TITULO_TRASLADO = 'DATOS DEL TRASLADO';
 
 /** Columnas del detalle de un destinatario: shape distinto al `Detalle` compartido (sin precio unitario ni impuestos). */
 const DESTINATARIO_DETALLE_COLUMN_SPECS: Array<[string, number, 'left' | 'right']> = [
@@ -100,9 +110,6 @@ export async function generarRideGuiaRemision(opciones: RideOptions<GuiaRemision
     agenteRetencion: documento.infoTributaria.agenteRetencion,
     contribuyenteRimpe: documento.infoTributaria.contribuyenteRimpe,
   };
-  const areaEmisor: AreaRide = { x: margenX, y, width: anchoEmisor };
-  const yEmisor = drawEmisor(doc, emisor, areaEmisor);
-
   const comprobante: ComprobanteRide = {
     ruc: documento.infoTributaria.ruc,
     nombreDocumento: nombreDocumento(documento.tipo),
@@ -112,27 +119,31 @@ export async function generarRideGuiaRemision(opciones: RideOptions<GuiaRemision
     claveAcceso,
     autorizacion,
   };
-  const areaComprobante: AreaRide = { x: margenX + anchoEmisor, y, width: anchoComprobante };
-  const yComprobante = drawComprobante(doc, comprobante, areaComprobante, qr);
-
-  y = Math.max(yEmisor, yComprobante) + ESPACIADO_BLOQUE;
+  y =
+    drawBloquesEnFila(
+      doc,
+      y,
+      medirEmisor(doc, emisor, anchoEmisor),
+      medirComprobante(doc, comprobante, anchoComprobante, qr !== undefined),
+      (yFila) => drawEmisor(doc, emisor, { x: margenX, y: yFila, width: anchoEmisor }),
+      (yFila) =>
+        drawComprobante(doc, comprobante, { x: margenX + anchoEmisor, y: yFila, width: anchoComprobante }, qr),
+      ESPACIADO_BLOQUE,
+    ) + ESPACIADO_BLOQUE;
 
   // Transportista + placa + fechas de transporte + dirección de partida.
-  y = asegurarEspacio(doc, y, 70);
+  const lineasTransportista = [
+    `Razón Social: ${documento.razonSocialTransportista}`,
+    `Identificación (RUC): ${documento.rucTransportista}`,
+    `Placa: ${documento.placa}`,
+    `Fecha Inicio Transporte: ${documento.fechaIniTransporte}`,
+    `Fecha Fin Transporte: ${documento.fechaFinTransporte}`,
+    `Dirección de Partida: ${documento.dirPartida}`,
+  ];
+  y = asegurarEspacio(doc, y, medirBloqueTexto(doc, TITULO_TRANSPORTISTA, lineasTransportista, anchoUtil));
   y =
-    drawBloqueTexto(
-      doc,
-      'TRANSPORTISTA',
-      [
-        `Razón Social: ${documento.razonSocialTransportista}`,
-        `Identificación (RUC): ${documento.rucTransportista}`,
-        `Placa: ${documento.placa}`,
-        `Fecha Inicio Transporte: ${documento.fechaIniTransporte}`,
-        `Fecha Fin Transporte: ${documento.fechaFinTransporte}`,
-        `Dirección de Partida: ${documento.dirPartida}`,
-      ],
-      { x: margenX, y, width: anchoUtil },
-    ) + ESPACIADO_BLOQUE;
+    drawBloqueTexto(doc, TITULO_TRANSPORTISTA, lineasTransportista, { x: margenX, y, width: anchoUtil }) +
+    ESPACIADO_BLOQUE;
 
   // Un bloque "destinatario" + sus datos de traslado + su tabla de detalle, por cada `Destinatario`.
   const columnasDetalle = construirColumnas(anchoUtil, DESTINATARIO_DETALLE_COLUMN_SPECS);
@@ -145,20 +156,20 @@ export async function generarRideGuiaRemision(opciones: RideOptions<GuiaRemision
       fechaEmision: destinatario.fechaEmisionDocSustento ?? documento.fechaIniTransporte,
       direccion: destinatario.dirDestinatario,
     };
-    y = asegurarEspacio(doc, y, 50);
+    y = asegurarEspacio(doc, y, medirComprador(doc, compradorDestinatario, anchoUtil));
     y = drawComprador(doc, compradorDestinatario, { x: margenX, y, width: anchoUtil }) + ESPACIADO_BLOQUE;
 
     const lineas = lineasTraslado(destinatario);
-    y = asegurarEspacio(doc, y, 16 * lineas.length);
-    y = drawBloqueTexto(doc, 'DATOS DEL TRASLADO', lineas, { x: margenX, y, width: anchoUtil }) + ESPACIADO_BLOQUE;
+    y = asegurarEspacio(doc, y, medirBloqueTexto(doc, TITULO_TRASLADO, lineas, anchoUtil));
+    y = drawBloqueTexto(doc, TITULO_TRASLADO, lineas, { x: margenX, y, width: anchoUtil }) + ESPACIADO_BLOQUE;
 
-    y = asegurarEspacio(doc, y, 30);
+    // `drawTablaGenerica` reserva su propio espacio: es dueña de su paginación fila a fila.
     const filasDetalle = destinatario.detalles.map(celdasDestinatarioDetalle);
     y = drawTablaGenerica(doc, columnasDetalle, filasDetalle, { x: margenX, y, width: anchoUtil }) + ESPACIADO_BLOQUE;
   }
 
   // Información adicional.
-  y = asegurarEspacio(doc, y, 20);
+  y = asegurarEspacio(doc, y, medirInfoAdicional(doc, documento.infoAdicional, anchoUtil));
   drawInfoAdicional(doc, documento.infoAdicional, { x: margenX, y, width: anchoUtil });
 
   return finalizar();
