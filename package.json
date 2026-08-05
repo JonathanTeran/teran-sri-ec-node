@@ -1,6 +1,6 @@
 {
   "name": "teran-sri-ec-node",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "workspaces": [
     "packages/sri-ec",
@@ -10,7 +10,8 @@
     "build": "npm run build --workspaces --if-present",
     "test": "npm test --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present && npm run typecheck:examples",
-    "typecheck:examples": "tsc --noEmit -p examples/tsconfig.json"
+    "typecheck:examples": "tsc --noEmit -p examples/tsconfig.json",
+    "verify:isolation": "bash scripts/verify-optional-isolation.sh"
   },
   "license": "MIT",
   "author": "Jonathan Terán"

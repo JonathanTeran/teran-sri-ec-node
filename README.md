@@ -389,7 +389,7 @@ Para generar el RIDE instala las dependencias opcionales: npm install pdfkit qrc
 ```
 
 ```ts
-import { writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { generarRide } from 'sri-ec/ride';
 
 // `resultado` es el EmissionResult de `sri.emit(factura)` (ver Uso más arriba).
