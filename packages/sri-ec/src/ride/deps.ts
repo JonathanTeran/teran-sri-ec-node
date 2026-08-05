@@ -47,22 +47,62 @@ export interface QrCodeApi {
   ): Promise<Buffer>;
 }
 
-/** @throws SriError con `code: 'RIDE_MISSING_DEPENDENCY'` si `pdfkit` no está instalado. */
+/**
+ * `true` si `err` es lo que Node lanza cuando el módulo, literalmente, no se
+ * encuentra en disco (paquete no instalado) — `ERR_MODULE_NOT_FOUND` para
+ * `import()` (lo que usa este archivo); se comprueba también la variante
+ * `MODULE_NOT_FOUND` (sin el prefijo `ERR_`, la que usa `require()` en CJS)
+ * por si el consumidor interopera con esta librería en un entorno que
+ * reduce `import()` a `require()` (p.ej. algunos bundlers/loaders de
+ * CommonJS) y ese es el código que efectivamente llega aquí.
+ *
+ * Cualquier OTRO error (p.ej. una instalación corrupta de `pdfkit`, una
+ * versión de Node incompatible, o una falla al cargar un asset de fuente
+ * interno de pdfkit) NO es "dependencia faltante": se relanza tal cual en
+ * `cargarPdfkit`/`cargarQrcode` en vez de reportarse como
+ * `RIDE_MISSING_DEPENDENCY` (hallazgo confirmado del reviewer — decirle a
+ * alguien que YA tiene `pdfkit` instalado que lo instale no ayuda a
+ * diagnosticar el problema real).
+ */
+function esModuloNoEncontrado(err: unknown): boolean {
+  const codigoEsNoEncontrado = (code: unknown): boolean => code === 'ERR_MODULE_NOT_FOUND' || code === 'MODULE_NOT_FOUND';
+
+  if (codigoEsNoEncontrado((err as { code?: unknown } | null | undefined)?.code)) return true;
+
+  // Además de `err.code` directo, se revisa `err.cause?.code`: algunos
+  // wrappers de módulo (incluido el mecanismo de mocking de las suites de
+  // test de este mismo paquete) reenvían el fallo real de resolución como
+  // `cause` de un error propio en vez de dejarlo en la propiedad `code` de
+  // primer nivel — sigue siendo, en esencia, "el módulo no se encontró".
+  return codigoEsNoEncontrado((err as { cause?: { code?: unknown } } | null | undefined)?.cause?.code);
+}
+
+/**
+ * @throws SriError con `code: 'RIDE_MISSING_DEPENDENCY'` si `pdfkit` no está
+ * instalado. Cualquier otro fallo de carga (ver {@link esModuloNoEncontrado})
+ * se relanza sin envolver, con su mensaje y `stack` originales intactos.
+ */
 export async function cargarPdfkit(): Promise<PDFDocumentConstructor> {
   try {
     const mod = (await import('pdfkit')) as unknown as { default: PDFDocumentConstructor };
     return mod.default;
-  } catch {
+  } catch (err) {
+    if (!esModuloNoEncontrado(err)) throw err;
     throw new SriError(MENSAJE_DEPENDENCIAS_FALTANTES, 'RIDE_MISSING_DEPENDENCY');
   }
 }
 
-/** @throws SriError con `code: 'RIDE_MISSING_DEPENDENCY'` si `qrcode` no está instalado. */
+/**
+ * @throws SriError con `code: 'RIDE_MISSING_DEPENDENCY'` si `qrcode` no está
+ * instalado. Cualquier otro fallo de carga (ver {@link esModuloNoEncontrado})
+ * se relanza sin envolver, con su mensaje y `stack` originales intactos.
+ */
 export async function cargarQrcode(): Promise<QrCodeApi> {
   try {
     const mod = (await import('qrcode')) as unknown as QrCodeApi;
     return mod;
-  } catch {
+  } catch (err) {
+    if (!esModuloNoEncontrado(err)) throw err;
     throw new SriError(MENSAJE_DEPENDENCIAS_FALTANTES, 'RIDE_MISSING_DEPENDENCY');
   }
 }

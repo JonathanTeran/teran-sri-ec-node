@@ -172,9 +172,24 @@ describe('ride: factura', () => {
     expect(Buffer.from(pdf.subarray(0, 5)).toString('latin1')).toBe('%PDF-');
   });
 
+  /**
+   * `.code = 'ERR_MODULE_NOT_FOUND'`: es el código real que Node pone en el
+   * error cuando `await import('paquete-no-instalado')` falla porque el
+   * paquete no existe en disco — `cargarPdfkit`/`cargarQrcode` (`deps.ts`)
+   * solo reportan `RIDE_MISSING_DEPENDENCY` para ESTE código (o su variante
+   * CJS `MODULE_NOT_FOUND`); cualquier otro error se relanza tal cual (fix
+   * round, hallazgo confirmado del reviewer — ver el test de "falla por otra
+   * razón" más abajo).
+   */
+  function mockModuloNoInstalado(mensaje: string): Error {
+    const err = new Error(mensaje);
+    (err as { code?: string }).code = 'ERR_MODULE_NOT_FOUND';
+    return err;
+  }
+
   it('lanza un SriError claro si falta la dependencia opcional pdfkit', async () => {
     vi.doMock('pdfkit', () => {
-      throw new Error('Cannot find module pdfkit');
+      throw mockModuloNoInstalado("Cannot find package 'pdfkit'");
     });
     const { generarRide, SriError } = await cargarRide();
 
@@ -186,7 +201,7 @@ describe('ride: factura', () => {
 
   it('lanza un SriError claro si falta la dependencia opcional qrcode', async () => {
     vi.doMock('qrcode', () => {
-      throw new Error('Cannot find module qrcode');
+      throw mockModuloNoInstalado("Cannot find package 'qrcode'");
     });
     const { generarRide, SriError } = await cargarRide();
 
@@ -194,6 +209,50 @@ describe('ride: factura', () => {
     await expect(generarRide({ documento: facturaFixture, claveAcceso })).rejects.toThrow(SriError);
     await expect(generarRide({ documento: facturaFixture, claveAcceso })).rejects.toThrow(
       /npm install pdfkit qrcode/,
+    );
+  });
+
+  /**
+   * `vi.doMock`/`vi.mock` envuelven CUALQUIER error que lance su factory en
+   * un `Error` propio de vitest (mensaje de diagnóstico genérico sobre
+   * hoisting) con `cause: <el error real>` — pasa incluso si la factory
+   * lanza sin relación alguna con hoisting, y con `vi.doMock` (no hoisted)
+   * igual que con `vi.mock`. Por eso estos dos tests miran `.cause.message`
+   * en vez de `.message`: es fiel a cómo se simula el fallo en la suite, no
+   * a cómo Node lanza el error real en producción (ahí no hay envoltura).
+   */
+  it('si pdfkit falla al cargar por una razón que NO es "no instalado", propaga el error real en vez de reportarlo como dependencia faltante (hallazgo confirmado del reviewer)', async () => {
+    // Sin `.code` de "no encontrado", como lanzaría una instalación
+    // corrupta, una versión de Node incompatible, o una falla al cargar un
+    // asset interno de pdfkit — nada de eso significa "el paquete no está
+    // instalado".
+    vi.doMock('pdfkit', () => {
+      throw new Error('Unexpected token: fuente corrupta en el binario de pdfkit');
+    });
+    const { generarRide, SriError } = await cargarRide();
+
+    const error: unknown = await generarRide({ documento: facturaFixture, claveAcceso }).catch((e) => e);
+
+    // Específicamente NO debe ser el SriError de "instala la dependencia":
+    // decirle a alguien que YA tiene pdfkit instalado que lo instale no
+    // ayuda a diagnosticar una instalación corrupta.
+    expect(error).not.toBeInstanceOf(SriError);
+    expect((error as { cause?: { message?: string } }).cause?.message).toContain(
+      'fuente corrupta en el binario de pdfkit',
+    );
+  });
+
+  it('si qrcode falla al cargar por una razón que NO es "no instalado", propaga el error real en vez de reportarlo como dependencia faltante (hallazgo confirmado del reviewer)', async () => {
+    vi.doMock('qrcode', () => {
+      throw new Error('Unexpected token: fuente corrupta en el binario de qrcode');
+    });
+    const { generarRide, SriError } = await cargarRide();
+
+    const error: unknown = await generarRide({ documento: facturaFixture, claveAcceso }).catch((e) => e);
+
+    expect(error).not.toBeInstanceOf(SriError);
+    expect((error as { cause?: { message?: string } }).cause?.message).toContain(
+      'fuente corrupta en el binario de qrcode',
     );
   });
 
