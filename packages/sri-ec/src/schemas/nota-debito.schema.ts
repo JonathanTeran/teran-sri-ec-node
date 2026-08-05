@@ -4,6 +4,8 @@ import { TipoComprobante } from '../catalogs/index.js';
 import type { Motivo, NotaDebito } from '../documents/nota-debito.js';
 import {
   camposAdicionalesField,
+  contribuyenteEspecialField,
+  dirEstablecimientoField,
   fechaField,
   infoTributariaSchema,
   montoField,
@@ -35,11 +37,11 @@ export const notaDebitoSchema = z
     tipo: z.literal(TipoComprobante.NotaDebito),
     infoTributaria: infoTributariaSchema,
     fechaEmision: fechaField,
-    dirEstablecimiento: nonEmptyString.optional(),
+    dirEstablecimiento: dirEstablecimientoField.optional(),
     tipoIdentificacionComprador: nonEmptyString,
     razonSocialComprador: razonSocialField,
     identificacionComprador: nonEmptyString,
-    contribuyenteEspecial: nonEmptyString.optional(),
+    contribuyenteEspecial: contribuyenteEspecialField.optional(),
     obligadoContabilidad: obligadoContabilidadField.optional(),
     rise: nonEmptyString.optional(),
     codDocModificado: nonEmptyString,

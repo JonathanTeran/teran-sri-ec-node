@@ -85,6 +85,67 @@ describe('schemaFor(Factura)', () => {
   });
 });
 
+/**
+ * `dirEstablecimiento` (simpleType `direccion` del XSD, máx. 300) y
+ * `contribuyenteEspecial` (simpleType `contribuyenteEspecial` del XSD, máx.
+ * 13) se modelaban como `nonEmptyString` sin tope superior en los 6
+ * schemas — un valor más largo pasaba zod, se firmaba y el SRI lo rechazaba
+ * en la recepción, quemando la clave de acceso (hallazgo confirmado del
+ * reviewer). `dirEstablecimientoField`/`contribuyenteEspecialField`
+ * (`shared.schema.ts`) son un único objeto zod reusado por los 6
+ * `*.schema.ts` — probarlo vía `Factura` (campo opcional) y `GuiaRemision`
+ * (campo obligatorio) cubre ambos usos sin repetir el boundary test 6 veces.
+ */
+describe('dirEstablecimiento / contribuyenteEspecial: límites de longitud del XSD (hallazgo confirmado del reviewer)', () => {
+  it('acepta dirEstablecimiento de exactamente 300 caracteres (límite del XSD)', () => {
+    const result = schemaFor(TipoComprobante.Factura).safeParse({
+      ...facturaFixture,
+      dirEstablecimiento: 'A'.repeat(300),
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('rechaza dirEstablecimiento de 301 caracteres, nombrando el campo', () => {
+    const errors = errorsFor(TipoComprobante.Factura, {
+      ...facturaFixture,
+      dirEstablecimiento: 'A'.repeat(301),
+    });
+    expect(errors.some((e) => e.startsWith('dirEstablecimiento:'))).toBe(true);
+  });
+
+  it('acepta contribuyenteEspecial de exactamente 13 caracteres (límite del XSD)', () => {
+    const result = schemaFor(TipoComprobante.Factura).safeParse({
+      ...facturaFixture,
+      contribuyenteEspecial: '1234567890123',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('rechaza contribuyenteEspecial de 14 caracteres, nombrando el campo', () => {
+    const errors = errorsFor(TipoComprobante.Factura, {
+      ...facturaFixture,
+      contribuyenteEspecial: '12345678901234',
+    });
+    expect(errors.some((e) => e.startsWith('contribuyenteEspecial:'))).toBe(true);
+  });
+
+  it('rechaza dirEstablecimiento de 301 caracteres en GuiaRemision, donde el campo es obligatorio (no solo opcional)', () => {
+    const errors = errorsFor(TipoComprobante.GuiaRemision, {
+      ...guiaRemisionFixture,
+      dirEstablecimiento: 'A'.repeat(301),
+    });
+    expect(errors.some((e) => e.startsWith('dirEstablecimiento:'))).toBe(true);
+  });
+
+  it('acepta dirEstablecimiento de exactamente 300 caracteres en GuiaRemision', () => {
+    const result = schemaFor(TipoComprobante.GuiaRemision).safeParse({
+      ...guiaRemisionFixture,
+      dirEstablecimiento: 'A'.repeat(300),
+    });
+    expect(result.success).toBe(true);
+  });
+});
+
 describe('schemaFor(LiquidacionCompra)', () => {
   it('acepta el fixture válido', () => {
     const result = schemaFor(TipoComprobante.LiquidacionCompra).safeParse(liquidacionCompraFixture);

@@ -4,6 +4,8 @@ import { TipoComprobante } from '../catalogs/index.js';
 import type { Destinatario, DestinatarioDetalle, GuiaRemision } from '../documents/guia-remision.js';
 import {
   camposAdicionalesField,
+  contribuyenteEspecialField,
+  dirEstablecimientoField,
   fechaField,
   infoTributariaSchema,
   montoField,
@@ -59,7 +61,7 @@ export const guiaRemisionSchema = z
   .object({
     tipo: z.literal(TipoComprobante.GuiaRemision),
     infoTributaria: infoTributariaSchema,
-    dirEstablecimiento: nonEmptyString,
+    dirEstablecimiento: dirEstablecimientoField,
     dirPartida: nonEmptyString,
     razonSocialTransportista: razonSocialField,
     tipoIdentificacionTransportista: nonEmptyString,
@@ -70,7 +72,7 @@ export const guiaRemisionSchema = z
     destinatarios: z.array(destinatarioSchema).min(1, 'debe tener al menos un destinatario'),
     rise: nonEmptyString.optional(),
     obligadoContabilidad: obligadoContabilidadField.optional(),
-    contribuyenteEspecial: nonEmptyString.optional(),
+    contribuyenteEspecial: contribuyenteEspecialField.optional(),
     infoAdicional: camposAdicionalesField.optional(),
   })
   .strict() satisfies z.ZodType<GuiaRemision>;

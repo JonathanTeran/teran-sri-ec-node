@@ -4,7 +4,9 @@ import { TipoComprobante } from '../catalogs/index.js';
 import type { Factura } from '../documents/factura.js';
 import {
   camposAdicionalesField,
+  contribuyenteEspecialField,
   detalleSchema,
+  dirEstablecimientoField,
   fechaField,
   infoTributariaSchema,
   montoField,
@@ -25,8 +27,8 @@ export const facturaSchema = z
     tipo: z.literal(TipoComprobante.Factura),
     infoTributaria: infoTributariaSchema,
     fechaEmision: fechaField,
-    dirEstablecimiento: nonEmptyString.optional(),
-    contribuyenteEspecial: nonEmptyString.optional(),
+    dirEstablecimiento: dirEstablecimientoField.optional(),
+    contribuyenteEspecial: contribuyenteEspecialField.optional(),
     tipoIdentificacionComprador: nonEmptyString,
     razonSocialComprador: razonSocialField,
     identificacionComprador: nonEmptyString,

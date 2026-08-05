@@ -13,7 +13,10 @@ import { isMonto } from '../utils/money.js';
  *
  * Reglas compartidas (brief Task 5): `ruc` `/^\d{13}$/`, `estab`/`ptoEmi`
  * `/^\d{3}$/`, `secuencial` `/^\d{9}$/`, `fecha` `/^\d{2}\/\d{2}\/\d{4}$/`,
- * montos vía `isMonto` (`utils/money.ts`), `razonSocial` 1–300 caracteres.
+ * montos vía `isMonto` (`utils/money.ts`), `razonSocial` 1–300 caracteres,
+ * `dirEstablecimiento` 1–300 caracteres, `contribuyenteEspecial` 1–13
+ * caracteres (los dos últimos, límites del XSD confirmados por el reviewer
+ * — antes modelados como `nonEmptyString` sin tope superior).
  * La validación de catálogo (p.ej. que `ruc` tenga un tercer dígito válido,
  * que `formaPago` exista en `catalogs/forma-pago.ts`) es responsabilidad de
  * `BusinessValidator` (Task 6) — aquí solo se valida forma/estructura.
@@ -39,6 +42,24 @@ export const montoField = z.string().refine(isMonto, 'debe ser un monto numéric
 
 /** `razonSocial` y cualquier campo `razonSocial*`: 1–300 caracteres (port de `razonSocial` en el XSD). */
 export const razonSocialField = z.string().min(1, 'no puede estar vacío').max(300, 'excede el máximo de 300 caracteres');
+
+/**
+ * `dirEstablecimiento`: 1–300 caracteres (port del simpleType `direccion`
+ * del XSD — el mismo límite que `dirMatriz`/`direccionComprador`, pero
+ * aparte de `nonEmptyString` porque a diferencia de esos otros campos SÍ
+ * tiene tope superior en el XSD). Sin este `.max`, un valor más largo pasa
+ * zod, se firma y el SRI lo rechaza en la recepción — quemando la clave de
+ * acceso (hallazgo confirmado del reviewer).
+ */
+export const dirEstablecimientoField = z.string().min(1, 'no puede estar vacío').max(300, 'excede el máximo de 300 caracteres');
+
+/**
+ * `contribuyenteEspecial`: 1–13 caracteres (port del simpleType
+ * `contribuyenteEspecial` del XSD — el número de resolución, no un RUC;
+ * puede ser más corto). Mismo motivo que {@link dirEstablecimientoField}
+ * para no usar `nonEmptyString` a secas.
+ */
+export const contribuyenteEspecialField = z.string().min(1, 'no puede estar vacío').max(13, 'excede el máximo de 13 caracteres');
 
 /** Código de forma de pago: 2 dígitos numéricos (catálogo real en `catalogs/forma-pago.ts`, validado por BusinessValidator). */
 export const formaPagoField = z.string().regex(/^\d{2}$/, 'debe ser un código numérico de 2 dígitos');
