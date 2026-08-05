@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { TipoComprobante } from '../src/catalogs/index.js';
-import type { DocSustento, Retencion } from '../src/documents/index.js';
+import type { DocSustento, GuiaRemision, Retencion } from '../src/documents/index.js';
 import { generarRide } from '../src/ride/index.js';
 import { generarClaveAcceso } from '../src/utils/clave-acceso.js';
 import {
@@ -92,7 +92,7 @@ const claveRetencion = generarClaveAcceso({
 });
 
 describe('ride: liquidación de compra', () => {
-  it('genera un PDF con los datos del proveedor, los totales y los bloques compartidos', async () => {
+  it('genera un PDF con los datos del proveedor, la tabla de detalle, formas de pago y totales', async () => {
     const pdf = await generarRide({
       documento: liquidacionCompraFixture,
       claveAcceso: claveLiquidacionCompra,
@@ -109,17 +109,31 @@ describe('ride: liquidación de compra', () => {
     expect(texto).toContain('001-001-000000002');
     expect(claveLiquidacionCompra).toHaveLength(49);
     expect(texto).toContain(claveLiquidacionCompra);
-    // Extra: datos del proveedor (no "comprador") y sus totales. `drawComprador`
-    // imprime la etiqueta en mayúsculas (ver `blocks.ts`).
+    // Extra: datos del proveedor (no "comprador"). `drawComprador` imprime la
+    // etiqueta en mayúsculas (ver `blocks.ts`).
     expect(texto).toContain('PROVEEDOR');
     expect(texto).toContain(liquidacionCompraFixture.razonSocialProveedor);
     expect(texto).toContain(liquidacionCompraFixture.identificacionProveedor);
+    // Detalle: cada descripción — prueba que `drawTablaDetalles` renderizó
+    // las filas (no solo el encabezado de columnas, que se dibuja siempre).
+    for (const detalle of liquidacionCompraFixture.detalles) {
+      expect(texto).toContain(detalle.descripcion);
+    }
+    // Formas de pago: encabezado + forma de pago decodificada. `importeTotal`
+    // ('56.00') por sí solo no distingue este bloque del de "Totales" —en
+    // este fixture un solo pago cubre el total, así que ambos bloques
+    // imprimen el mismo número; el encabezado y la etiqueta decodificada solo
+    // los imprime `drawFormasPago`.
+    expect(texto).toContain('FORMAS DE PAGO');
+    expect(texto).toContain('Sin utilización del sistema financiero'); // LABEL_FORMA_PAGO[FormaPago.EFECTIVO]
+    // Totales.
+    expect(texto).toContain('TOTALES');
     expect(texto).toContain(liquidacionCompraFixture.importeTotal);
   });
 });
 
 describe('ride: nota de crédito', () => {
-  it('genera un PDF con el comprobante que modifica, el motivo y el valor de modificación', async () => {
+  it('genera un PDF con el comprobante que modifica, la tabla de detalle, el motivo y el valor de modificación', async () => {
     const pdf = await generarRide({
       documento: notaCreditoFixture,
       claveAcceso: claveNotaCredito,
@@ -135,11 +149,24 @@ describe('ride: nota de crédito', () => {
     expect(claveNotaCredito).toHaveLength(49);
     expect(texto).toContain(claveNotaCredito);
     // Extra: comprobante que modifica (codDocModificado + numDocModificado +
-    // fechaEmisionDocSustento), motivo y valor de modificación.
-    expect(texto).toContain(notaCreditoFixture.codDocModificado);
+    // fechaEmisionDocSustento) + motivo. `codDocModificado` ('01') solo, sin
+    // más contexto, no prueba nada por sí mismo: es un substring trivial de
+    // la clave de acceso de 49 dígitos y de otros números del documento —
+    // verificado (`claveNotaCredito.includes('01') === true`). Se verifica la
+    // línea completa tal como la compone `nota-credito.ride.ts`.
+    expect(texto).toContain('COMPROBANTE QUE MODIFICA');
+    expect(texto).toContain(`Tipo de Comprobante Modificado: ${notaCreditoFixture.codDocModificado} - Factura`);
     expect(texto).toContain(notaCreditoFixture.numDocModificado);
     expect(texto).toContain(notaCreditoFixture.fechaEmisionDocSustento);
     expect(texto).toContain(notaCreditoFixture.motivo);
+    // Detalle: cada descripción.
+    for (const detalle of notaCreditoFixture.detalles) {
+      expect(texto).toContain(detalle.descripcion);
+    }
+    // Totales: `valorModificacion` hace de "VALOR TOTAL" — a diferencia de
+    // liquidación de compra, esta nota no tiene `pagos`, así que este valor
+    // no coincide con ningún otro bloque en este fixture.
+    expect(texto).toContain('TOTALES');
     expect(texto).toContain(notaCreditoFixture.valorModificacion);
   });
 });
@@ -164,7 +191,16 @@ describe('ride: nota de débito', () => {
     for (const motivo of notaDebitoFixture.motivos) {
       expect(texto).toContain(motivo.razon);
     }
-    // Formas de pago + totales.
+    // Formas de pago: encabezado + forma de pago decodificada. Antes esta
+    // prueba solo verificaba `valorTotal`, que también aparece en el bloque
+    // de totales (mismo número, dos bloques) — confirmado con mutación
+    // manual: comentando la llamada a `drawFormasPago` en
+    // `nota-debito.ride.ts` este test seguía en verde sin este assert (ver
+    // task-2-report.md, sección de la revisión).
+    expect(texto).toContain('FORMAS DE PAGO');
+    expect(texto).toContain('Sin utilización del sistema financiero'); // LABEL_FORMA_PAGO[FormaPago.EFECTIVO]
+    // Totales.
+    expect(texto).toContain('TOTALES');
     expect(texto).toContain(notaDebitoFixture.valorTotal);
   });
 });
@@ -186,24 +222,52 @@ describe('ride: guía de remisión', () => {
     expect(claveGuiaRemision).toHaveLength(49);
     expect(texto).toContain(claveGuiaRemision);
     // Extra: transportista, placa, fechas de inicio/fin de transporte.
+    // `rucTransportista` coincide con el RUC del emisor en este fixture
+    // (ambos '1790011001001'), así que por sí solo no prueba que este bloque
+    // se dibujó — el encabezado "TRANSPORTISTA" (que solo imprime este
+    // bloque) es lo que realmente lo confirma.
+    expect(texto).toContain('TRANSPORTISTA');
     expect(texto).toContain(guiaRemisionFixture.razonSocialTransportista);
     expect(texto).toContain(guiaRemisionFixture.rucTransportista);
     expect(texto).toContain(guiaRemisionFixture.placa);
     expect(texto).toContain(guiaRemisionFixture.fechaIniTransporte);
     expect(texto).toContain(guiaRemisionFixture.fechaFinTransporte);
-    // Extra: cada destinatario, su motivo de traslado y su tabla de detalle.
+    // Extra: cada destinatario (encabezado + razón social + identificación),
+    // su motivo de traslado (encabezado + texto) y su tabla de detalle.
     for (const destinatario of guiaRemisionFixture.destinatarios) {
+      expect(texto).toContain('DESTINATARIO');
       expect(texto).toContain(destinatario.razonSocialDestinatario);
+      expect(texto).toContain(destinatario.identificacionDestinatario);
+      expect(texto).toContain('DATOS DEL TRASLADO');
       expect(texto).toContain(destinatario.motivoTraslado);
       for (const detalle of destinatario.detalles) {
         expect(texto).toContain(detalle.descripcion);
       }
     }
   });
+
+  it('renderiza el documento aduanero único y la ruta cuando el destinatario los trae (hallazgo de revisión: guiaRemisionFixture no ejercitaba estas dos ramas condicionales)', async () => {
+    const guiaConAduanaYRuta: GuiaRemision = {
+      ...guiaRemisionFixture,
+      destinatarios: [
+        {
+          ...guiaRemisionFixture.destinatarios[0],
+          docAduaneroUnico: 'DAU-2026-000123',
+          ruta: 'Quito - Guayaquil vía E35',
+        },
+      ],
+    };
+
+    const pdf = await generarRide({ documento: guiaConAduanaYRuta, claveAcceso: claveGuiaRemision });
+    const texto = await extraerTextoPdf(pdf);
+
+    expect(texto).toContain('Documento Aduanero Único: DAU-2026-000123');
+    expect(texto).toContain('Ruta: Quito - Guayaquil vía E35');
+  });
 });
 
 describe('ride: retención', () => {
-  it('genera un PDF con el periodo fiscal, la tabla de documentos sustento y el total retenido', async () => {
+  it('genera un PDF con el periodo fiscal, la tabla de documentos sustento (impuesto decodificado + código de retención) y el total retenido', async () => {
     const pdf = await generarRide({
       documento: retencionFixture,
       claveAcceso: claveRetencion,
@@ -223,13 +287,21 @@ describe('ride: retención', () => {
     expect(texto).toContain('Período Fiscal');
     expect(texto).toContain(retencionFixture.periodoFiscal);
     expect(texto).toContain('Total Retenido');
-    // Extra: tabla de documentos sustento (número + valor retenido, por cada fila).
+    // Extra: tabla de documentos sustento — número, código de retención y
+    // valor retenido, por cada fila.
     for (const docSustento of retencionFixture.docsSustento) {
       expect(texto).toContain(docSustento.numDocSustento);
       for (const retencion of docSustento.retenciones) {
         expect(texto).toContain(retencion.valorRetenido);
+        expect(texto).toContain(retencion.codigoRetencion);
       }
     }
+    // Columna "Impuesto": debe mostrar el tipo de impuesto decodificado
+    // ("IVA", vía `LABEL_IMPUESTO_RETENCION` en `retencion.ride.ts` para
+    // `codigo: '2'`), no el código de retención crudo ('303', que es
+    // `codigoRetencion` y va en su propia columna "Código" — hallazgo
+    // confirmado de la revisión).
+    expect(texto).toContain('IVA');
   });
 });
 

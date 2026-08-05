@@ -24,21 +24,47 @@ const PROPORCION_EMISOR = 0.55;
 
 /** Columnas de la tabla de documentos sustento: una fila de tabla por cada `RetencionRow` dentro de cada `DocSustento`. */
 const DOC_SUSTENTO_COLUMN_SPECS: Array<[string, number, 'left' | 'right']> = [
-  ['Comprobante', 0.11, 'left'],
-  ['Número', 0.19, 'left'],
-  ['Fecha Emisión', 0.13, 'left'],
-  ['Impuesto', 0.11, 'left'],
-  ['Base Imponible', 0.15, 'right'],
-  ['%', 0.09, 'right'],
+  ['Comprobante', 0.1, 'left'],
+  ['Número', 0.16, 'left'],
+  ['Fecha Emisión', 0.11, 'left'],
+  ['Impuesto', 0.1, 'left'],
+  ['Código', 0.09, 'left'],
+  ['Base Imponible', 0.14, 'right'],
+  ['%', 0.08, 'right'],
   ['Valor Retenido', 0.22, 'right'],
 ];
+
+/**
+ * Etiqueta legible del tipo de impuesto retenido, por `RetencionRow.codigo`
+ * — catálogo SRI del nodo `<impuesto>` dentro de cada `<retencion>` de un
+ * comprobante de retención: `1` = RENTA, `2` = IVA, `6` = ISD. NO confundir
+ * con `RetencionRow.codigoRetencion` (p.ej. `'303'`), que es el código del
+ * concepto de retención de la Tabla 19 (Retenciones Impuesto a la Renta) o
+ * la Tabla 21 (Retenciones IVA) del SRI — ese va en su propia columna
+ * "Código", no en "Impuesto" (hallazgo confirmado de la revisión: antes
+ * `codigoRetencion` se imprimía bajo el encabezado "Impuesto", mezclando
+ * ambos catálogos). Local a este renderer (no en `catalogs/`) porque es
+ * puramente una etiqueta de presentación del RIDE, igual que
+ * `LABEL_FORMA_PAGO` en `blocks.ts` — los códigos en sí no tienen un tipo
+ * nominal público hoy (`RetencionRow.codigo` se modela como `string` suelto
+ * en `documents/retencion.ts`).
+ */
+const LABEL_IMPUESTO_RETENCION: Record<string, string> = {
+  '1': 'RENTA',
+  '2': 'IVA',
+  '6': 'ISD',
+};
 
 /**
  * Aplana `docsSustento[].retenciones[]` a una fila de tabla por cada
  * retención, con los datos del `DocSustento` que la contiene (tipo,
  * número, fecha de emisión) repetidos por fila — un `DocSustento` puede
  * traer varias `retenciones` (p.ej. IVA y renta sobre el mismo comprobante
- * sustento).
+ * sustento). La columna "Impuesto" muestra el tipo de impuesto decodificado
+ * (`LABEL_IMPUESTO_RETENCION`, con fallback al código crudo si no está en
+ * el mapa); "Código" muestra el código de retención tal cual
+ * (`codigoRetencion`) — son dos catálogos SRI distintos, cada uno en su
+ * propia columna.
  */
 function filasDocsSustento(docsSustento: DocSustento[]): string[][] {
   const filas: string[][] = [];
@@ -48,6 +74,7 @@ function filasDocsSustento(docsSustento: DocSustento[]): string[][] {
         docSustento.codDocSustento,
         docSustento.numDocSustento,
         docSustento.fechaEmisionDocSustento,
+        LABEL_IMPUESTO_RETENCION[retencion.codigo] ?? retencion.codigo,
         retencion.codigoRetencion,
         formatMonto(retencion.baseImponible, 2),
         `${retencion.porcentajeRetener}%`,
