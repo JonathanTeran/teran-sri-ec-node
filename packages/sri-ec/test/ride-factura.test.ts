@@ -116,6 +116,25 @@ describe('ride: factura', () => {
     expect(texto).toContain(facturaFixture.importeTotal);
   });
 
+  it('la columna "Cant." no parte una cantidad de 6 cifras a la mitad (hallazgo confirmado del reviewer)', async () => {
+    const { generarRide } = await cargarRide();
+
+    const facturaConCantidadGrande: Factura = {
+      ...facturaFixture,
+      detalles: [{ ...facturaFixture.detalles[0], cantidad: '999999.99' }],
+    };
+
+    const pdf = await generarRide({ documento: facturaConCantidadGrande, claveAcceso });
+    const texto = await extraerTextoPdf(pdf);
+
+    // `extraerTextoPdf` une los `TextItem` de pdfjs con un espacio: si
+    // pdfkit hubiera partido "999999.99" en dos líneas ("999999." / "99",
+    // el bug original con la columna a 0.07 de ancho), aparecerían como dos
+    // `TextItem` separados y el texto extraído tendría un espacio en medio
+    // ("999999. 99") en vez del valor contiguo.
+    expect(texto).toContain('999999.99');
+  });
+
   it('renderiza dirEstablecimiento/contribuyenteEspecial en el bloque emisor cuando el documento los trae (fix round 1, gap real confirmado del reviewer)', async () => {
     const { generarRide } = await cargarRide();
 

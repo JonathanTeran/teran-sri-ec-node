@@ -23,16 +23,29 @@ const ESPACIADO_BLOQUE = 10;
 /** Proporción del ancho útil que ocupa la columna del emisor en la cabecera (el resto es "comprobante"). */
 const PROPORCION_EMISOR = 0.55;
 
-/** Columnas de la tabla de documentos sustento: una fila de tabla por cada `RetencionRow` dentro de cada `DocSustento`. */
+/**
+ * Columnas de la tabla de documentos sustento: una fila de tabla por cada
+ * `RetencionRow` dentro de cada `DocSustento`.
+ *
+ * `Comprobante` (0.115, no 0.1) y `Fecha Emisión` (0.125, no 0.11): hallazgo
+ * confirmado del reviewer — con las fracciones originales, el ancho útil de
+ * ambas columnas en A4 (a `TAMANO_TABLA` en negrita, el encabezado) era
+ * menor que el texto del propio encabezado (`"Comprobante"` ≈ 48.6pt vs
+ * ≈ 46pt útiles; `"Fecha Emisión"` ≈ 52.9pt vs ≈ 51pt útiles), así que
+ * pdfkit partía el encabezado en dos líneas ("Comprobant" / "e"). Se
+ * compensa restando de `Impuesto` (0.09), `Código` (0.08) y `%` (0.065) —
+ * las tres tienen de sobra frente a su contenido real (`RENTA`/`IVA`/`ISD`,
+ * códigos cortos, porcentajes de pocos dígitos).
+ */
 const DOC_SUSTENTO_COLUMN_SPECS: Array<[string, number, 'left' | 'right']> = [
-  ['Comprobante', 0.1, 'left'],
+  ['Comprobante', 0.115, 'left'],
   ['Número', 0.16, 'left'],
-  ['Fecha Emisión', 0.11, 'left'],
-  ['Impuesto', 0.1, 'left'],
-  ['Código', 0.09, 'left'],
+  ['Fecha Emisión', 0.125, 'left'],
+  ['Impuesto', 0.09, 'left'],
+  ['Código', 0.08, 'left'],
   ['Base Imponible', 0.14, 'right'],
-  ['%', 0.08, 'right'],
-  ['Valor Retenido', 0.22, 'right'],
+  ['%', 0.065, 'right'],
+  ['Valor Retenido', 0.225, 'right'],
 ];
 
 /**

@@ -374,12 +374,22 @@ export function construirColumnas(
   return specs.map(([header, , align], i) => ({ header, width: widths[i], align }));
 }
 
-/** Columnas fijas del detalle de factura/liquidación de compra/nota de crédito. */
+/**
+ * Columnas fijas del detalle de factura/liquidación de compra/nota de
+ * crédito. `Cant.`: 0.085 (no 0.07, hallazgo confirmado del reviewer) — con
+ * 0.07 el ancho útil de la columna en A4 (usable ≈ 30pt a `TAMANO_TABLA`)
+ * era menor que `999999.99` (el máximo realista con 2 decimales, ≈ 35.4pt),
+ * así que un `Detalle` con esa cantidad partía el número a la mitad entre
+ * dos líneas ("999999." / "99") — inaceptable en un documento fiscal, donde
+ * confundir el valor invita a un error de lectura. Se compensa restando
+ * 0.015 a `Descripción` (la columna con más margen de sobra: ancho de wrap
+ * variable por diseño, no un valor fijo que se pueda partir mal).
+ */
 const DETALLE_COLUMN_SPECS: Array<[string, number, 'left' | 'right']> = [
   ['Cód. Principal', 0.13, 'left'],
   ['Cód. Auxiliar', 0.11, 'left'],
-  ['Cant.', 0.07, 'right'],
-  ['Descripción', 0.34, 'left'],
+  ['Cant.', 0.085, 'right'],
+  ['Descripción', 0.325, 'left'],
   ['P. Unitario', 0.12, 'right'],
   ['Descuento', 0.1, 'right'],
   ['P. Total', 0.13, 'right'],

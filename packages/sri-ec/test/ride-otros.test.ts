@@ -302,6 +302,13 @@ describe('ride: retención', () => {
     // `codigoRetencion` y va en su propia columna "Código" — hallazgo
     // confirmado de la revisión).
     expect(texto).toContain('IVA');
+    // Encabezados "Comprobante" y "Fecha Emisión" completos, no partidos a
+    // la mitad (hallazgo confirmado del reviewer: con las columnas a 0.1 y
+    // 0.11 de ancho, pdfkit envolvía el encabezado en dos líneas —
+    // "Comprobant" / "e" — y `extraerTextoPdf` (une los `TextItem` de
+    // pdfjs con un espacio) lo habría mostrado como "Comprobant e").
+    expect(texto).toContain('Comprobante');
+    expect(texto).toContain('Fecha Emisión');
   });
 });
 
