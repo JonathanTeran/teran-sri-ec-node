@@ -2,7 +2,38 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "outDir": "dist",
-    "rootDir": "src"
+    "rootDir": "src",
+    /**
+     * `src/ride/*.ts` importa símbolos del core por auto-referencia
+     * (`import { SriError } from 'sri-ec'`, ver `tsup.config.ts` → `external`
+     * y la nota en `src/ride/deps.ts`): así el bundle `dist/ride/index.*`
+     * comparte en runtime las clases del core en vez de inlinear copias
+     * (lo que rompía `instanceof SriError` en CJS).
+     *
+     * Sin este `paths`, resolver `'sri-ec'` para TYPES requiere que
+     * `dist/index.d.ts` ya exista en disco: tsup genera el `.d.ts` de AMBAS
+     * entradas (`index` y `ride/index`) en una sola pasada de `tsc`/rollup,
+     * así que en un `dist/` recién limpiado (`clean: true` en
+     * `tsup.config.ts`, o un checkout fresco sin build previo) el `.d.ts`
+     * del core todavía no existe cuando se procesa `ride/index.ts` →
+     * `TS7016: Could not find a declaration file for module 'sri-ec'`. Solo
+     * funcionaba antes porque quedaba un `dist/` viejo de un build anterior.
+     *
+     * Este alias resuelve `'sri-ec'` directo a la fuente (mismo criterio que
+     * el alias de `'sri-ec'` en `vitest.config.ts`, ver la nota ahí) SOLO
+     * para la resolución de tipos de TypeScript — no afecta el bundle JS en
+     * runtime: `tsup.config.ts` marca `'sri-ec'` como `external` para
+     * esbuild, que resuelve ese import de forma completamente aparte (vía
+     * Node, con la auto-referencia real de `package.json` → `exports`) y
+     * nunca consulta este `tsconfig.json`. Como ambas entradas (`index` y
+     * `ride/index`) siguen construyéndose en la misma pasada de tsup/rollup,
+     * y ahora las dos resuelven al mismo `src/index.ts`, el bundler de
+     * `.d.ts` sigue deduplicando los tipos compartidos en un chunk común
+     * (`dist/index-*.d.ts`) — igual que en el paquete ya publicado en npm.
+     */
+    "paths": {
+      "sri-ec": ["./src/index.ts"]
+    }
   },
   "include": ["src"]
 }
