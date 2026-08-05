@@ -1,6 +1,7 @@
 import { TipoEmision } from '../catalogs/index.js';
 import type { DocSustento, Retencion } from '../documents/index.js';
-import { formatMonto, fromCents, toCents } from '../utils/money.js';
+// Desde `'sri-ec'` (no `'../utils/money.js'`), ver la nota en `blocks.ts`.
+import { formatMonto, fromCents, toCents } from 'sri-ec';
 import {
   asegurarEspacio,
   construirColumnas,

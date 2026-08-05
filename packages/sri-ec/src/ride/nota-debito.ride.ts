@@ -1,6 +1,7 @@
 import { TipoEmision } from '../catalogs/index.js';
 import type { NotaDebito } from '../documents/index.js';
-import { formatMonto } from '../utils/money.js';
+// Desde `'sri-ec'` (no `'../utils/money.js'`), ver la nota en `blocks.ts`.
+import { formatMonto } from 'sri-ec';
 import {
   asegurarEspacio,
   construirColumnas,

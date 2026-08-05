@@ -3,8 +3,8 @@ import type { Comprobante, TotalImpuesto } from '../documents/index.js';
 
 /**
  * Tipos públicos e internos del submódulo RIDE (port funcional, no de PHP:
- * es una capa nueva). `RideOptions` es la API pública que describe el plan
- * (`docs/plans/2026-08-04-ride.md`); el resto son los contratos de datos que
+ * es una capa nueva). `RideOptions` es la API pública del submódulo; el
+ * resto son los contratos de datos que
  * consumen los helpers de `blocks.ts` — pensados para que cada
  * `*.ride.ts` (factura en Task 1; los otros 5 en Task 2) solo tenga que
  * mapear su propio shape de documento a estas formas normalizadas, sin que

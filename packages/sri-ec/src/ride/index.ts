@@ -1,6 +1,5 @@
 import { TipoComprobante } from '../catalogs/index.js';
 import type { Comprobante } from '../documents/index.js';
-import { SriError } from '../errors/index.js';
 import { generarRideFactura } from './factura.ride.js';
 import { generarRideGuiaRemision } from './guia-remision.ride.js';
 import { generarRideLiquidacionCompra } from './liquidacion-compra.ride.js';
@@ -8,12 +7,17 @@ import { generarRideNotaCredito } from './nota-credito.ride.js';
 import { generarRideNotaDebito } from './nota-debito.ride.js';
 import { generarRideRetencion } from './retencion.ride.js';
 import type { RideOptions } from './types.js';
+// Auto-referencia al propio paquete (no `'../errors/index.js'`): ver la nota
+// de bundling en `deps.ts` — así `dist/ride/index.cjs` no incluye su propia
+// copia de `SriError` y `instanceof` sigue funcionando también en CJS.
+import { SriError } from 'sri-ec';
 
 /**
  * Punto de entrada público de `sri-ec/ride` (subpath aparte, ver
  * `package.json` → `exports["./ride"]`). El core de `sri-ec` (`src/index.ts`)
  * NO importa nada de este directorio: quien solo emite/firma comprobantes no
- * paga el costo de `pdfkit`/`qrcode`, que además son `optionalDependencies`
+ * paga el costo de `pdfkit`/`qrcode`, que además son `peerDependencies`
+ * opcionales — no se instalan salvo que el consumidor lo haga explícitamente
  * (ver `deps.ts`).
  *
  * Deliberadamente NO se reexporta `blocks.js`: sus `draw*` toman
@@ -39,7 +43,7 @@ export { generarQr } from './qr.js';
  * Genera el RIDE (PDF) del comprobante, despachando por `documento.tipo`.
  * Cubre los 6 tipos de comprobante del catálogo SRI (Task 1: factura;
  * Task 2: liquidación de compra, nota de crédito, nota de débito, guía de
- * remisión, retención — ver `docs/plans/2026-08-04-ride.md`).
+ * remisión, retención).
  *
  * El `default` es una salvaguarda inalcanzable en tiempo de compilación
  * (`documento.tipo` es una unión discriminada exhaustiva sobre los 6 casos

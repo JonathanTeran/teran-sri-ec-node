@@ -1,13 +1,21 @@
 import { Ambiente, TipoComprobante, TipoEmision } from '../catalogs/index.js';
 import { FormaPago } from '../catalogs/forma-pago.js';
 import type { Detalle, InfoTributaria, Pago, TotalImpuesto } from '../documents/index.js';
-import { SriError } from '../errors/index.js';
-import { formatMonto, fromCents, toCents } from '../utils/money.js';
+// `SriError` y las utilidades de `utils/money.ts` se importan por el nombre
+// del propio paquete (auto-referencia, ver `tsup.config.ts` y la nota en
+// `deps.ts`) en vez de `'../errors/index.js'`/`'../utils/money.js'`: este
+// último también lanza `ValidationError` (subclase de `SriError`), así que
+// bundlearlo localmente reintroduciría la misma duplicación de clase que
+// esto corrige. Importar ambos desde `'sri-ec'` hace que el bundle de este
+// subpath NO incluya ninguna copia propia de esas clases — `instanceof
+// SriError`/`instanceof ValidationError` siguen siendo verdaderos para quien
+// capture el error importando desde `'sri-ec'` (el core), incluso en CJS.
+import { formatMonto, fromCents, SriError, toCents } from 'sri-ec';
 import type { AreaRide, ComprobanteRide, CompradorRide, EmisorRide, TotalesRide } from './types.js';
 
 /**
- * Bloques reutilizables del RIDE (ver "Bloques obligatorios del RIDE" en
- * `docs/plans/2026-08-04-ride.md`). Cada `draw*` recibe el `PDFDocument` de
+ * Bloques reutilizables del RIDE (los "Bloques obligatorios del RIDE" del
+ * diseño original). Cada `draw*` recibe el `PDFDocument` de
  * pdfkit ya posicionado en `área.x`/`área.y`, dibuja su contenido y devuelve
  * el `y` del borde inferior de lo que dibujó — es el contrato completo que
  * Task 2 (`liquidacion-compra.ride.ts`, `nota-credito.ride.ts`, etc.)
