@@ -5,6 +5,7 @@
     "baseUrl": ".",
     "paths": {
       "sri-ec": ["../packages/sri-ec/src/index.ts"],
+      "sri-ec/ride": ["../packages/sri-ec/src/ride/index.ts"],
       "sri-ec-nestjs": ["../packages/nestjs-sri-ec/src/index.ts"]
     }
   },

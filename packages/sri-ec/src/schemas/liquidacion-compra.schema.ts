@@ -4,7 +4,9 @@ import { TipoComprobante } from '../catalogs/index.js';
 import type { LiquidacionCompra } from '../documents/liquidacion-compra.js';
 import {
   camposAdicionalesField,
+  contribuyenteEspecialField,
   detalleSchema,
+  dirEstablecimientoField,
   fechaField,
   infoTributariaSchema,
   montoField,
@@ -25,8 +27,8 @@ export const liquidacionCompraSchema = z
     tipo: z.literal(TipoComprobante.LiquidacionCompra),
     infoTributaria: infoTributariaSchema,
     fechaEmision: fechaField,
-    dirEstablecimiento: nonEmptyString.optional(),
-    contribuyenteEspecial: nonEmptyString.optional(),
+    dirEstablecimiento: dirEstablecimientoField.optional(),
+    contribuyenteEspecial: contribuyenteEspecialField.optional(),
     tipoIdentificacionProveedor: nonEmptyString,
     razonSocialProveedor: razonSocialField,
     identificacionProveedor: nonEmptyString,

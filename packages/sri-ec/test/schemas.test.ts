@@ -27,6 +27,15 @@ describe('schemaFor(Factura)', () => {
     expect(result.success).toBe(true);
   });
 
+  it('acepta dirEstablecimiento/contribuyenteEspecial cuando están presentes (fix round 1, gap real confirmado del reviewer)', () => {
+    const result = schemaFor(TipoComprobante.Factura).safeParse({
+      ...facturaFixture,
+      dirEstablecimiento: 'Av. Amazonas N24-03, Quito',
+      contribuyenteEspecial: '5368',
+    });
+    expect(result.success).toBe(true);
+  });
+
   it('rechaza un ruc de 12 dígitos, nombrando el campo', () => {
     const errors = errorsFor(TipoComprobante.Factura, {
       ...facturaFixture,
@@ -73,6 +82,95 @@ describe('schemaFor(Factura)', () => {
       campoInventado: 'x',
     });
     expect(errors.length).toBeGreaterThan(0);
+  });
+});
+
+/**
+ * `dirEstablecimiento` (simpleType `direccion` del XSD, máx. 300) y
+ * `contribuyenteEspecial` (simpleType `contribuyenteEspecial` del XSD, máx.
+ * 13) se modelaban como `nonEmptyString` sin tope superior en los 6
+ * schemas — un valor más largo pasaba zod, se firmaba y el SRI lo rechazaba
+ * en la recepción, quemando la clave de acceso (hallazgo confirmado del
+ * reviewer). `dirEstablecimientoField`/`contribuyenteEspecialField`
+ * (`shared.schema.ts`) son un único objeto zod reusado por los 6
+ * `*.schema.ts` — probarlo vía `Factura` (campo opcional) y `GuiaRemision`
+ * (campo obligatorio) cubre ambos usos sin repetir el boundary test 6 veces.
+ */
+describe('dirEstablecimiento / contribuyenteEspecial: límites de longitud del XSD (hallazgo confirmado del reviewer)', () => {
+  it('acepta dirEstablecimiento de exactamente 300 caracteres (límite del XSD)', () => {
+    const result = schemaFor(TipoComprobante.Factura).safeParse({
+      ...facturaFixture,
+      dirEstablecimiento: 'A'.repeat(300),
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('rechaza dirEstablecimiento de 301 caracteres, nombrando el campo', () => {
+    const errors = errorsFor(TipoComprobante.Factura, {
+      ...facturaFixture,
+      dirEstablecimiento: 'A'.repeat(301),
+    });
+    expect(errors.some((e) => e.startsWith('dirEstablecimiento:'))).toBe(true);
+  });
+
+  it('acepta contribuyenteEspecial de exactamente 13 caracteres (límite del XSD)', () => {
+    const result = schemaFor(TipoComprobante.Factura).safeParse({
+      ...facturaFixture,
+      contribuyenteEspecial: '1234567890123',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('rechaza contribuyenteEspecial de 14 caracteres, nombrando el campo', () => {
+    const errors = errorsFor(TipoComprobante.Factura, {
+      ...facturaFixture,
+      contribuyenteEspecial: '12345678901234',
+    });
+    expect(errors.some((e) => e.startsWith('contribuyenteEspecial:'))).toBe(true);
+  });
+
+  it('rechaza dirEstablecimiento de 301 caracteres en GuiaRemision, donde el campo es obligatorio (no solo opcional)', () => {
+    const errors = errorsFor(TipoComprobante.GuiaRemision, {
+      ...guiaRemisionFixture,
+      dirEstablecimiento: 'A'.repeat(301),
+    });
+    expect(errors.some((e) => e.startsWith('dirEstablecimiento:'))).toBe(true);
+  });
+
+  it('acepta dirEstablecimiento de exactamente 300 caracteres en GuiaRemision', () => {
+    const result = schemaFor(TipoComprobante.GuiaRemision).safeParse({
+      ...guiaRemisionFixture,
+      dirEstablecimiento: 'A'.repeat(300),
+    });
+    expect(result.success).toBe(true);
+  });
+
+  /**
+   * `infoTributaria.dirMatriz` (mismo simpleType `direccion` del XSD,
+   * `resources/xsd/factura_v2.1.0.xsd:332-338`, máx. 300) — MISMA clase de
+   * bug que `dirEstablecimiento`/`contribuyenteEspecial` arriba, encontrada
+   * en una auditoría posterior: se modelaba como `nonEmptyString` sin tope
+   * superior. `checkCamposLocales` (`business-validator.ts`) ya lo limitaba
+   * a 300 en la capa de negocio (`assertValid`/`validateBusiness`), pero
+   * `schemaFor(doc.tipo).safeParse(doc)` por sí solo —sin pasar por esa capa,
+   * un uso que `validateBusiness` documenta explícitamente como válido— no
+   * rechazaba un valor más largo: pasaba zod, se firmaba y el SRI lo
+   * rechazaba en la recepción, quemando la clave de acceso.
+   */
+  it('acepta infoTributaria.dirMatriz de exactamente 300 caracteres (límite del XSD)', () => {
+    const result = schemaFor(TipoComprobante.Factura).safeParse({
+      ...facturaFixture,
+      infoTributaria: { ...facturaFixture.infoTributaria, dirMatriz: 'A'.repeat(300) },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('rechaza infoTributaria.dirMatriz de 301 caracteres, nombrando el campo', () => {
+    const errors = errorsFor(TipoComprobante.Factura, {
+      ...facturaFixture,
+      infoTributaria: { ...facturaFixture.infoTributaria, dirMatriz: 'A'.repeat(301) },
+    });
+    expect(errors.some((e) => e.startsWith('infoTributaria.dirMatriz:'))).toBe(true);
   });
 });
 

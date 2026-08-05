@@ -11,12 +11,12 @@ import { esRucLocalValido } from '../schemas/business-validator.js';
  *    exactamente la (deliberada) looseness de `BusinessValidator::validarRuc()`
  *    en PHP (sin módulo 10/11 ni provincia); `opts.checksum = true` añade,
  *    de forma aditiva y opt-in, el algoritmo real ecuatoriano vía
- *    {@link validarRucChecksum} (fix round 1, ver `task-14-report.md`).
+ *    {@link validarRucChecksum} (fix round 1).
  *  - {@link validarRucOnline} — el paso local + la verificación online, con
  *    fallback al resultado local si la red falla (mismo criterio que PHP).
  *
- * Ver el reporte de la tarea (`task-14-report.md`) para el detalle de por qué
- * `validarRucOnline` no es un port línea-por-línea de `RucValidator::validate()`:
+ * Nota de fidelidad: `validarRucOnline` no es un port línea-por-línea de
+ * `RucValidator::validate()`:
  * el PHP original tiene una rama muerta (el resultado de `checkOnline()` nunca
  * afecta el valor de retorno) que aquí se corrige para que el chequeo online
  * cumpla el propósito descrito en sus propios comentarios.
@@ -47,8 +47,7 @@ export interface ValidarRucLocalOptions {
    *
    * `true`: además exige que {@link validarRucChecksum} pase (módulo 10/11 +
    * provincia real) — validación *estricta*, opt-in, aditiva. No existe en el
-   * PHP fuente; es una extensión de este port (fix round 1, ver
-   * `task-14-report.md`).
+   * PHP fuente; es una extensión de este port (fix round 1).
    */
   checksum?: boolean;
 }
@@ -68,7 +67,7 @@ export interface ValidarRucLocalOptions {
  * estructurales de arriba. Se preserva esa looseness a propósito por defecto
  * (paridad de comportamiento con el PHP fuente — de la que dependen
  * `schemas/*.schema.ts` y `business-validator.ts` en todo el paquete), no por
- * omisión — ver `task-14-report.md`.
+ * omisión.
  *
  * `opts.checksum = true` aplica, ADEMÁS, el algoritmo real ecuatoriano
  * ({@link validarRucChecksum}: módulo 10/11 según el tipo de contribuyente +
@@ -86,7 +85,7 @@ export function validarRucLocal(ruc: string, opts: ValidarRucLocalOptions = {}):
 // (módulo 10 para cédula/persona natural, módulo 11 para sociedades públicas
 // y privadas, + código de provincia). NO existe en el PHP fuente
 // (`BusinessValidator::validarRuc()` no lo implementa, confirmado por
-// inspección exhaustiva — ver task-14-report.md); es una extensión aditiva
+// inspección exhaustiva del PHP fuente); es una extensión aditiva
 // de este port, expuesta como función independiente y como opt-in de
 // `validarRucLocal` (fix round 1).
 // ---------------------------------------------------------------------------
@@ -167,8 +166,7 @@ function digitoVerificadorModulo11(prefijo: string, coeficientes: readonly numbe
  * ampliamente documentado y usado en validadores de RUC ecuatoriano
  * (9 coeficientes, verificador en la posición 10, establecimiento de 3
  * dígitos = 9 + 1 + 3 = 13 dígitos, consistente y simétrico con el patrón de
- * "públicas" salvo por el ancho del establecimiento) — ver `task-14-report.md`
- * para el detalle y los cálculos de verificación a mano.
+ * "públicas" salvo por el ancho del establecimiento).
  */
 export function validarRucChecksum(ruc: string): boolean {
   if (!/^\d{13}$/.test(ruc)) return false;
@@ -204,7 +202,7 @@ export function validarRucChecksum(ruc: string): boolean {
  * cuerpo, texto plano, tal como lo consume `RucValidator::checkOnline()` en
  * PHP con `$response === 'true'`, aquí con `.trim()` para no rechazar en
  * falso por espacio en blanco incidental que el PHP original tampoco
- * contemplaba — fix round 1, ver `task-14-report.md`).
+ * contemplaba — fix round 1).
  */
 async function checkOnline(ruc: string, fetchImpl: typeof fetch, timeoutMs: number): Promise<boolean | null> {
   const controller = new AbortController();
@@ -251,7 +249,7 @@ async function checkOnline(ruc: string, fetchImpl: typeof fetch, timeoutMs: numb
  * validación local" documenta claramente la intención de un fallback
  * *ante fallo*, no de ignorar una respuesta negativa explícita. Este port
  * implementa la intención documentada (paso 3 arriba) en vez de replicar la
- * rama muerta — ver `task-14-report.md` para el detalle.
+ * rama muerta.
  */
 export async function validarRucOnline(ruc: string, opts: ValidarRucOnlineOptions = {}): Promise<boolean> {
   if (!validarRucLocal(ruc)) return false;

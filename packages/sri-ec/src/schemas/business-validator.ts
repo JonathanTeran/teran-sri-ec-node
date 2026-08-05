@@ -9,8 +9,7 @@ import { schemaFor, zodIssuesToErrors } from './index.js';
 /**
  * Validador de negocio (port de `src/Schema/BusinessValidator.php`), más las
  * "reglas mínimas" de cuadre aritmético que exige el brief de Task 6 (que el
- * PHP original no implementa como tal — ver `task-6-report.md` para el
- * mapeo regla-por-regla).
+ * PHP original no implementa como tal).
  *
  * A diferencia de `schemas/*.schema.ts` (Task 5), que valida forma/estructura
  * (regex, longitudes, "es un monto"), este módulo valida *coherencia*: que

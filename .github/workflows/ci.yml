@@ -36,3 +36,11 @@ jobs:
       - run: npm run typecheck
 
       - run: npm test
+
+      # Empaqueta sri-ec de verdad (npm pack) y lo instala en un proyecto
+      # descartable con un `npm install` liso — sin esto, un regreso
+      # accidental a `optionalDependencies` (ver package.json de sri-ec) solo
+      # se habría notado en el próximo `npm install sri-ec` de un usuario,
+      # no en CI: los tests unitarios corren contra el código fuente vía
+      # vitest, nunca contra el tarball publicado.
+      - run: npm run verify:isolation

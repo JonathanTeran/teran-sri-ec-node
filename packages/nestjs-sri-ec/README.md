@@ -13,7 +13,7 @@ Módulo de inyección de dependencias para **NestJS** sobre [`sri-ec`](https://w
 npm install sri-ec sri-ec-nestjs
 ```
 
-Requiere **Node.js >= 20**. Peer dependencies: `sri-ec@^0.1.0` y `@nestjs/common@^10 || ^11`.
+Requiere **Node.js >= 20**. Peer dependencies: `sri-ec@^0.2.0` y `@nestjs/common@^10 || ^11`.
 
 ## Uso
 

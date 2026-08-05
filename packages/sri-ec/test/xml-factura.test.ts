@@ -162,16 +162,18 @@ describe('FacturaXmlSerializer', () => {
 });
 
 /**
- * Factura con los 9 campos opcionales del XSD 2.1.0 que el value object v2
+ * Factura con los 11 campos opcionales del XSD 2.1.0 que el value object v2
  * de PHP no modela, pero que sí son legales (`minOccurs="0"`) y que el
  * generador 1.x (`FacturaGenerator.php`/`XmlGenerator.php`) escribe cuando
  * están presentes. `direccionComprador` e `infoAdicional` ya vienen con
- * valor en `facturaFixture`; los otros 7 se agregan aquí explícitamente
- * (`detallesAdicionales`/`plazo`+`unidadTiempo` añadidos en la ronda de fix
- * del reviewer — ver `task-8-report.md`, sección "Fix round 1"). `moneda`/
- * `propina` se fuerzan a valores distintos del literal por defecto
- * (`'DOLAR'`/`'0.00'`) para verificar que el serializador los lee del
- * documento en vez de ignorarlos.
+ * valor en `facturaFixture`; los otros 9 se agregan aquí explícitamente
+ * (`detallesAdicionales`/`plazo`+`unidadTiempo` añadidos en una ronda de fix
+ * del reviewer — ver `task-8-report.md`, sección "Fix round 1";
+ * `dirEstablecimiento`/`contribuyenteEspecial` en otra — gap real que
+ * `Factura` era el único de los 6 tipos de comprobante en no modelar, ver
+ * `task-1-report.md`, sección "Fix round 1"). `moneda`/`propina` se fuerzan
+ * a valores distintos del literal por defecto (`'DOLAR'`/`'0.00'`) para
+ * verificar que el serializador los lee del documento en vez de ignorarlos.
  */
 const facturaConOpcionales: Factura = {
   ...facturaFixture,
@@ -180,6 +182,8 @@ const facturaConOpcionales: Factura = {
     agenteRetencion: '30',
     contribuyenteRimpe: 'CONTRIBUYENTE RÉGIMEN RIMPE',
   },
+  dirEstablecimiento: 'Av. Amazonas N24-03, Quito',
+  contribuyenteEspecial: '5368',
   guiaRemision: '001-001-000000123',
   propina: '1.50',
   moneda: 'USD',
@@ -212,6 +216,30 @@ describe('FacturaXmlSerializer — campos opcionales del XSD 2.1.0 (no modelados
     expect(iAgenteRetencion).toBeGreaterThan(iDirMatriz);
     expect(iContribuyenteRimpe).toBeGreaterThan(iAgenteRetencion);
     expect(iCierreInfoTributaria).toBeGreaterThan(iContribuyenteRimpe);
+  });
+
+  it('emite infoFactura/dirEstablecimiento e infoFactura/contribuyenteEspecial con su valor (fix round 1, gap real confirmado del reviewer)', () => {
+    expect(xml).toContain('<dirEstablecimiento>Av. Amazonas N24-03, Quito</dirEstablecimiento>');
+    expect(xml).toContain('<contribuyenteEspecial>5368</contribuyenteEspecial>');
+  });
+
+  it('posiciona dirEstablecimiento/contribuyenteEspecial entre fechaEmision y obligadoContabilidad, en ese orden', () => {
+    const iFechaEmision = xml.indexOf('<fechaEmision>');
+    const iDirEstablecimiento = xml.indexOf('<dirEstablecimiento>');
+    const iContribuyenteEspecial = xml.indexOf('<contribuyenteEspecial>');
+    const iObligadoContabilidad = xml.indexOf('<obligadoContabilidad>');
+
+    expect(iFechaEmision).toBeGreaterThan(-1);
+    expect(iDirEstablecimiento).toBeGreaterThan(iFechaEmision);
+    expect(iContribuyenteEspecial).toBeGreaterThan(iDirEstablecimiento);
+    expect(iObligadoContabilidad).toBeGreaterThan(iContribuyenteEspecial);
+  });
+
+  it('no emite dirEstablecimiento/contribuyenteEspecial cuando están ausentes', () => {
+    const xmlSinExtras = new FacturaXmlSerializer().serialize(facturaGolden, claveAcceso);
+
+    expect(xmlSinExtras).not.toContain('dirEstablecimiento');
+    expect(xmlSinExtras).not.toContain('contribuyenteEspecial');
   });
 
   it('emite guiaRemision entre tipoIdentificacionComprador y razonSocialComprador', () => {

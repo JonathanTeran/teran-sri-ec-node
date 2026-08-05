@@ -12,6 +12,7 @@ Es el port oficial de [`amephia/sri-ec`](https://packagist.org/packages/amephia/
 ## Características
 
 - Los **6 comprobantes electrónicos**: Factura (`01`), Liquidación de Compra (`03`), Nota de Crédito (`04`), Nota de Débito (`05`), Guía de Remisión (`06`) y Comprobante de Retención (`07`).
+- **RIDE (PDF + QR)** de los 6 comprobantes vía el subpath opcional `sri-ec/ride` (`npm install pdfkit qrcode` — ver [RIDE](#ride-pdf--qr)).
 - Certificados `.p12`/`.pfx` **modernos y legacy** (RC2/3DES pre-2024), sin depender de la versión de OpenSSL del sistema.
 - Firma **RSA y ECDSA**, digest configurable (`sha1` por defecto — lo que el SRI valida hoy — o `sha256`).
 - Validación **estructural** (zod) y **de negocio** (coherencia aritmética de totales, impuestos y retenciones).
@@ -90,6 +91,8 @@ if (resultado.status === 'AUTORIZADO') {
 }
 ```
 
+`Factura` también admite `dirEstablecimiento` y `contribuyenteEspecial` (opcionales, no usados en el ejemplo mínimo de arriba): dirección del establecimiento emisor y número de resolución de contribuyente especial — el RIDE los imprime en el bloque emisor cuando están presentes.
+
 ### Firmar sin emitir (`prepare`)
 
 Para firmar ahora y despachar después (cola, lote, worker):
@@ -137,6 +140,32 @@ try {
 | `validarRucLocal` / `validarRucChecksum` / `validarRucOnline` | Validación de RUC. |
 
 La referencia completa (envío masivo, transporte propio, troubleshooting de zona horaria y certificados legacy) está en el [README del repositorio](https://github.com/JonathanTeran/teran-sri-ec-node#readme).
+
+## RIDE (PDF + QR)
+
+El RIDE (PDF con código QR de la clave de acceso) de los 6 comprobantes vive en el subpath opcional `sri-ec/ride`, para que emitir/firmar no pague el costo de sus dependencias. Instala `pdfkit` y `qrcode` solo si vas a generarlo:
+
+```bash
+npm install pdfkit qrcode
+```
+
+```ts
+import { writeFileSync } from 'node:fs';
+import { generarRide } from 'sri-ec/ride';
+
+const pdf: Uint8Array = await generarRide({
+  documento: factura, // cualquiera de los 6 comprobantes (unión `Comprobante`)
+  claveAcceso: resultado.claveAcceso,
+  autorizacion:
+    resultado.status === 'AUTORIZADO'
+      ? { numero: resultado.numeroAutorizacion!, fecha: resultado.fechaAutorizacion! }
+      : undefined, // opcional: sin ella, el RIDE sale marcado "NO AUTORIZADO"
+});
+
+writeFileSync('factura.pdf', pdf);
+```
+
+Si `pdfkit`/`qrcode` no están instalados al llamar a `generarRide()`, se lanza un `SriError` con el mensaje exacto de qué instalar, en vez del error crudo de Node. El QR codifica la clave de acceso de 49 dígitos — lo que el portal del SRI necesita para verificar el comprobante. Detalle completo (todas las opciones, atajos por tipo) en el [README del repositorio](https://github.com/JonathanTeran/teran-sri-ec-node#-ride-pdf--qr).
 
 ## NestJS
 

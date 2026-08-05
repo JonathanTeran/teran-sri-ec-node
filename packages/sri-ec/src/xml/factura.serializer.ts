@@ -10,24 +10,28 @@ import { XmlBuilder, XmlElement, serializeXmlDocument } from './xml-builder.js';
  * literales (`codDoc`, `version`).
  *
  * `Documents\Factura` (value object v2 de PHP) y su serializador NO modelan
- * `direccionComprador`, `guiaRemision`, `infoAdicional`,
- * `contribuyenteRimpe`, `agenteRetencion`, `TotalImpuesto.descuentoAdicional`,
- * `Detalle.detallesAdicionales` ni `Pago.plazo`/`unidadTiempo` — pero SÍ son
- * campos legales del XSD oficial `factura_v2.1.0.xsd` (todos
- * `minOccurs="0"`), y el generador 1.x (`Generators/FacturaGenerator.php` +
- * `Generators/XmlGenerator.php`) sí los escribe cuando están presentes, en
- * la posición exacta que exige la secuencia del XSD. Este serializador
- * emite esos 9 campos cuando el documento TS los trae (el tipo `Factura`
- * los modela todos como opcionales), en la posición verificada
- * directamente contra `resources/xsd/factura_v2.1.0.xsd` (no solo contra
- * el generador 1.x, que apunta a la versión de esquema `1.1.0` — se usó
- * como referencia de orden, pero la fuente de verdad final es el XSD
- * 2.1.0):
+ * `dirEstablecimiento`, `contribuyenteEspecial`, `direccionComprador`,
+ * `guiaRemision`, `infoAdicional`, `contribuyenteRimpe`, `agenteRetencion`,
+ * `TotalImpuesto.descuentoAdicional`, `Detalle.detallesAdicionales` ni
+ * `Pago.plazo`/`unidadTiempo` — pero SÍ son campos legales del XSD oficial
+ * `factura_v2.1.0.xsd` (todos `minOccurs="0"`), y el generador 1.x
+ * (`Generators/FacturaGenerator.php` + `Generators/XmlGenerator.php`) sí los
+ * escribe cuando están presentes, en la posición exacta que exige la
+ * secuencia del XSD. Este serializador emite esos 11 campos cuando el
+ * documento TS los trae (el tipo `Factura` los modela todos como
+ * opcionales), en la posición verificada directamente contra
+ * `resources/xsd/factura_v2.1.0.xsd` (no solo contra el generador 1.x, que
+ * apunta a la versión de esquema `1.1.0` — se usó como referencia de orden,
+ * pero la fuente de verdad final es el XSD 2.1.0):
  *
  *   - `infoTributaria`: `dirMatriz` → `agenteRetencion`? → `contribuyenteRimpe`?
- *   - `infoFactura`: `tipoIdentificacionComprador` → `guiaRemision`? →
- *     `razonSocialComprador` → `identificacionComprador` →
- *     `direccionComprador`? → `totalSinImpuestos`
+ *   - `infoFactura`: `fechaEmision` → `dirEstablecimiento`? →
+ *     `contribuyenteEspecial`? → `obligadoContabilidad`? (`dirEstablecimiento`/
+ *     `contribuyenteEspecial` son fix round 1, hallazgo confirmado del
+ *     reviewer — gap real, no del RIDE: `Factura` era el único de los 6
+ *     tipos de este port que no los modelaba) → `tipoIdentificacionComprador`
+ *     → `guiaRemision`? → `razonSocialComprador` → `identificacionComprador`
+ *     → `direccionComprador`? → `totalSinImpuestos`
  *   - `totalImpuesto`: `codigoPorcentaje` → `descuentoAdicional`? →
  *     `baseImponible`
  *   - `detalle`: `precioTotalSinImpuesto` → `detallesAdicionales`?
@@ -105,6 +109,16 @@ export class FacturaXmlSerializer {
     const { SCALE_MONEY } = FacturaXmlSerializer;
     const node = b.child(root, 'infoFactura');
     b.child(node, 'fechaEmision', f.fechaEmision);
+    // Orden XSD (factura_v2.1.0.xsd, complexType infoFactura): fechaEmision →
+    // dirEstablecimiento? → contribuyenteEspecial? → obligadoContabilidad?
+    // (fix round 1, hallazgo confirmado del reviewer — mismo orden que
+    // `FacturaGenerator::createInfoFactura()` 1.x, `$simpleFields`).
+    if (f.dirEstablecimiento !== undefined) {
+      b.child(node, 'dirEstablecimiento', f.dirEstablecimiento);
+    }
+    if (f.contribuyenteEspecial !== undefined) {
+      b.child(node, 'contribuyenteEspecial', f.contribuyenteEspecial);
+    }
     // El constructor v2 de PHP defaultea obligadoContabilidad a 'NO'.
     b.child(node, 'obligadoContabilidad', f.obligadoContabilidad ?? 'NO');
     b.child(node, 'tipoIdentificacionComprador', f.tipoIdentificacionComprador);
