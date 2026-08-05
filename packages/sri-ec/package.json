@@ -1,6 +1,6 @@
 {
   "name": "sri-ec",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Cliente Node.js/TypeScript para facturación electrónica del SRI Ecuador (port de teran-sri-ec).",
   "keywords": [
     "sri",

@@ -19,6 +19,7 @@ Este repositorio es un **monorepo npm workspaces** con dos paquetes:
 - ✅ **Certificados `.p12`/`.pfx` sin dependencias nativas**: `node-forge` (JS puro) carga certificados modernos y **legacy** (cifrado RC2/3DES pre-2024) de forma nativa — a diferencia del paquete PHP, **no** necesita un fallback a OpenSSL 1.1 (ver [Troubleshooting](#-troubleshooting)).
 - ✅ **RSA y ECDSA**, algoritmo de digest configurable (`sha1` por defecto — lo que el SRI valida hoy — o `sha256`).
 - ✅ **Los 6 comprobantes electrónicos**: Factura, Liquidación de Compra, Notas de Crédito/Débito, Guía de Remisión y Retención, todos serializables y emitibles con la misma API.
+- ✅ **RIDE (PDF + QR)** para los 6 comprobantes vía el subpath opcional `sri-ec/ride` — `pdfkit`/`qrcode` no se instalan ni se cargan si no se usa (ver [RIDE](#-ride-pdf--qr)).
 - ✅ **Validación estructural + de negocio**: schemas [zod](https://zod.dev/) (forma, patrones, longitudes) más un `BusinessValidator` que verifica coherencia aritmética (totales, impuestos agregados, retenciones) — **no valida contra XSD** (ver [Troubleshooting](#-troubleshooting)).
 - ✅ **Cliente SOAP nativo sobre `fetch`**: sin WSDL ni `SoapClient`, un POST directo a los web services offline del SRI.
 - ✅ **Envío masivo (`BatchEmitter`)** con reintentos y backoff exponencial configurables.
@@ -173,6 +174,8 @@ if (resultado.status === 'AUTORIZADO') {
   for (const m of resultado.messages) console.log(`[${m.identificador}] ${m.mensaje}`);
 }
 ```
+
+`Factura` también admite `dirEstablecimiento` y `contribuyenteEspecial` (ambos opcionales, ausentes del ejemplo mínimo de arriba): dirección del establecimiento emisor y número de resolución de contribuyente especial del SRI — el RIDE los imprime en el bloque emisor cuando están presentes (ver [RIDE](#-ride-pdf--qr)).
 
 **Firma del método:** `SriClient.emit(doc: Comprobante, claveAcceso?: string): Promise<EmissionResult>`
 
@@ -369,6 +372,52 @@ El certificado se resuelve **antes** de que nada entre al contenedor de DI: bajo
 
 Como consecuencia, `SriModule.forRoot()` carga el certificado **al evaluar la definición del módulo** (en la propia llamada a `forRoot()`, antes de que Nest compile nada): un `.p12` corrupto o una contraseña incorrecta fallan de inmediato, en el import del módulo, con `CertificateError`, en vez de en la primera inyección de `SriService`/`SRI_CLIENT`. Con `forRootAsync()` la carga ocurre al ejecutarse la `useFactory`, durante la compilación del módulo.
 
+## 🧾 RIDE (PDF + QR)
+
+El RIDE (Representación Impresa del Documento Electrónico) es el PDF legible — con el mismo contenido tributario del XML más un código QR — que se entrega junto al comprobante. Vive en un **subpath aparte**, `sri-ec/ride`: el core de `sri-ec` no lo importa nunca, así que quien solo emite/firma comprobantes no paga el costo de sus dependencias.
+
+`pdfkit` (dibujo del PDF) y `qrcode` (el código QR) son **dependencias opcionales** (`optionalDependencies` + `peerDependenciesMeta` opcional) — instálalas solo si vas a generar el RIDE:
+
+```bash
+npm install pdfkit qrcode
+```
+
+Si faltan al llamar a `generarRide()`, la librería lanza un `SriError` (`code: 'RIDE_MISSING_DEPENDENCY'`) con el mensaje exacto de qué instalar, en vez de dejar escapar el error crudo de Node:
+
+```
+Para generar el RIDE instala las dependencias opcionales: npm install pdfkit qrcode
+```
+
+```ts
+import { writeFileSync } from 'node:fs';
+import { generarRide } from 'sri-ec/ride';
+
+// `resultado` es el EmissionResult de `sri.emit(factura)` (ver Uso más arriba).
+const pdf: Uint8Array = await generarRide({
+  documento: factura, // cualquiera de los 6 comprobantes (unión `Comprobante`)
+  claveAcceso: resultado.claveAcceso,
+  autorizacion: // opcional: ver más abajo
+    resultado.status === 'AUTORIZADO'
+      ? { numero: resultado.numeroAutorizacion!, fecha: resultado.fechaAutorizacion! }
+      : undefined,
+  logo: readFileSync('logo.png'), // opcional, PNG/JPG del emisor
+  opciones: {
+    tamano: 'A4', // 'A4' | 'LETTER', default 'A4'
+    incluirQr: true, // default true
+  },
+});
+
+writeFileSync('factura.pdf', pdf);
+```
+
+`generarRide()` despacha por `documento.tipo` y cubre los **6 comprobantes** (Factura, Liquidación de Compra, Notas de Crédito/Débito, Guía de Remisión, Retención) con la misma llamada. También hay un atajo por tipo si el discriminado automático no hace falta: `generarRideFactura`, `generarRideLiquidacionCompra`, `generarRideNotaCredito`, `generarRideNotaDebito`, `generarRideGuiaRemision`, `generarRideRetencion` — todos exportados desde `sri-ec/ride`.
+
+El QR codifica la **clave de acceso** (los mismos 49 dígitos que van en el XML firmado): es lo único que el portal de verificación del SRI necesita para consultar el comprobante.
+
+`autorizacion` es opcional: el SRI autoriza de forma asíncrona, así que si el RIDE se imprime antes de recibir la respuesta (o la autorización nunca llegó), el PDF se genera igual — con la cabecera marcada como **"NO AUTORIZADO"** en vez de mostrar número y fecha de autorización.
+
+Ejemplo completo y compilable (emitir con `SriClient` y generar el RIDE del resultado, con `node:fs`): [`examples/generar-ride.ts`](examples/generar-ride.ts).
+
 ## 📂 Estructura del Proyecto
 
 ```
@@ -384,6 +433,7 @@ packages/
 │       ├── batch/                  # BatchEmitter, BatchProcessor, RetryPolicy
 │       ├── utils/                  # generarClaveAcceso (Módulo 11), RUC, montos decimal-seguros
 │       ├── emission/                # EmissionResult, EmissionStatus, Message
+│       ├── ride/                    # RIDE (PDF+QR), subpath opcional `sri-ec/ride` — pdfkit/qrcode
 │       ├── errors/                  # SriError y subclases (ValidationError, CertificateError, ...)
 │       └── sri-client.ts           # SriClient — orquestador de alto nivel
 └── nestjs-sri-ec/                  # sri-ec-nestjs (wiring de DI, sin lógica propia)
@@ -448,9 +498,10 @@ Igual que el paquete PHP (ver `XadesSigner` para el detalle byte a byte):
 
 - [`examples/emitir-factura.ts`](examples/emitir-factura.ts) — carga un certificado, arma una factura mínima y la emite contra el SRI de pruebas.
 - [`examples/lote-con-prepare.ts`](examples/lote-con-prepare.ts) — envío masivo a partir de documentos: `sri.prepare(doc)` → persistir → `batch.add()` → drenar el lote con el pacing de `RetryPolicy`.
+- [`examples/generar-ride.ts`](examples/generar-ride.ts) — emite una factura con `SriClient` y genera su RIDE (`sri-ec/ride`) a partir del resultado, escribiendo el PDF a disco con `node:fs`.
 - [`examples/smoke-pruebas-sri.ts`](examples/smoke-pruebas-sri.ts) — smoke test paso a paso (certificado → clave de acceso → firma → recepción → autorización) contra el SRI de pruebas real, leyendo `SRI_P12_PATH`/`SRI_P12_PASSWORD`/`SRI_RUC` de variables de entorno. **Contacta el servicio real del SRI — no es un mock.**
 
-Ambos se verifican con `tsc --noEmit` (`npm run typecheck:examples`), pero no se ejecutan como parte del build ni de los tests: requieren un certificado real.
+Todos se verifican con `tsc --noEmit` (`npm run typecheck:examples`), pero no se ejecutan como parte del build ni de los tests: requieren un certificado real.
 
 ## 🔧 Troubleshooting
 
