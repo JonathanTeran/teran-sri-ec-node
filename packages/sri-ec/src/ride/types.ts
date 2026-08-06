@@ -31,7 +31,23 @@ export interface AutorizacionRide {
 export interface OpcionesFormatoRide {
   /** Tamaño de página. @default 'A4' */
   tamano?: TamanoPaginaRide;
-  /** Si se dibuja el código QR de la clave de acceso. @default true */
+  /**
+   * Si se dibuja el **código de barras Code 128** de la clave de acceso bajo
+   * el rótulo `CLAVE DE ACCESO`. Es lo que imprime la maqueta del Anexo 2 de
+   * la Ficha Técnica; la nota al pie de la página 56 aclara que el código de
+   * barras es opcional, de ahí la opción. @default true
+   */
+  codigoBarras?: boolean;
+  /**
+   * Si se dibuja el código QR de la clave de acceso.
+   *
+   * El QR **no** está en el Anexo 2 (era un añadido propio de v0.2.0); desde
+   * 0.3.0 el predeterminado es el código de barras y esta opción queda como
+   * alternativa para quien prefiera el QR — de ahí que su valor por defecto
+   * pasara de `true` a `false`. Activarla requiere tener instalada la
+   * dependencia opcional `qrcode`; con el predeterminado, `pdfkit` basta.
+   * @default false
+   */
   incluirQr?: boolean;
 }
 
@@ -138,6 +154,28 @@ export interface AreaRide {
 }
 
 /**
+ * Etiquetas literales de la tabla de totales del Anexo 2. Vive aquí y no en
+ * `blocks.ts` por la misma razón que el resto de contratos de datos: `blocks.ts`
+ * toma `PDFKit.PDFDocument` en sus firmas y `@types/pdfkit` es solo
+ * devDependency, así que nada de lo que el barrel público reexporta puede
+ * referenciarlo (ver la nota de `index.ts` sobre `TS2503`).
+ */
+export interface EtiquetasTotales {
+  /** Subtotal de la tarifa 0%. `SUBTOTAL IVA 0%` en factura; `SUBTOTAL 0%` en liquidación de compra. */
+  subtotalCero: string;
+  /** `SUBTOTAL NO OBJETO IVA` / `SUBTOTAL NO OBJETO DE IVA`. */
+  subtotalNoObjeto: string;
+  /** `SUBTOTAL EXENTO IVA` / `SUBTOTAL EXENTO DE IVA`. */
+  subtotalExento: string;
+  /** `SUBTOTAL SIN IMPUESTOS`. */
+  subtotalSinImpuestos: string;
+  /** `DESCUENTO` / `TOTAL DESCUENTO`. */
+  descuento: string;
+  /** `VALOR TOTAL`. */
+  valorTotal: string;
+}
+
+/**
  * Datos del bloque "totales". `impuestos` es deliberadamente
  * {@link TotalImpuesto}`[]` (no `Impuesto[]`, que sí trae `tarifa`) porque es
  * el shape que comparten `Factura.totalConImpuestos`,
@@ -159,6 +197,26 @@ export interface TotalesRide {
   totalDescuento?: string;
   propina?: string;
   importeTotal: string;
+  /**
+   * Sobreescribe las etiquetas literales de la tabla de totales. La factura
+   * (Anexo 2, página 56) y la liquidación de compra (página 61) redactan las
+   * mismas filas de forma distinta —`SUBTOTAL IVA 0%` vs `SUBTOTAL 0%`,
+   * `DESCUENTO` vs `TOTAL DESCUENTO`—, así que cada `*.ride.ts` pone las de SU
+   * maqueta en vez de que `blocks.ts` discrimine por tipo de comprobante. Sin
+   * esto se usan las de la factura.
+   */
+  etiquetas?: Partial<EtiquetasTotales>;
+  /**
+   * Emite la fila `PROPINA` SIEMPRE (en `0.00` si el documento no la trae):
+   * es una fila fija de la maqueta de la factura. Los comprobantes que no la
+   * contemplan (notas, liquidación de compra) no la activan.
+   */
+  conPropina?: boolean;
+  /**
+   * Emite el recuadro `VALOR TOTAL SIN SUBSIDIO` / `AHORRO POR SUBSIDIO`
+   * bajo la tabla de totales — solo la factura lo lleva.
+   */
+  conSubsidio?: boolean;
   /**
    * Moneda del comprobante (`Factura.moneda`/`LiquidacionCompra.moneda`/
    * `NotaCredito.moneda`; `NotaDebito` no la modela). Opcional porque

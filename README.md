@@ -403,7 +403,8 @@ const pdf: Uint8Array = await generarRide({
   logo: readFileSync('logo.png'), // opcional, PNG/JPG del emisor
   opciones: {
     tamano: 'A4', // 'A4' | 'LETTER', default 'A4'
-    incluirQr: true, // default true
+    codigoBarras: true, // código de barras Code 128 de la clave de acceso, default true
+    incluirQr: false, // QR (alternativa al código de barras), default false
   },
 });
 
@@ -412,7 +413,9 @@ writeFileSync('factura.pdf', pdf);
 
 `generarRide()` despacha por `documento.tipo` y cubre los **6 comprobantes** (Factura, Liquidación de Compra, Notas de Crédito/Débito, Guía de Remisión, Retención) con la misma llamada. También hay un atajo por tipo si el discriminado automático no hace falta: `generarRideFactura`, `generarRideLiquidacionCompra`, `generarRideNotaCredito`, `generarRideNotaDebito`, `generarRideGuiaRemision`, `generarRideRetencion` — todos exportados desde `sri-ec/ride`.
 
-El QR codifica la **clave de acceso** (los mismos 49 dígitos que van en el XML firmado): es lo único que el portal de verificación del SRI necesita para consultar el comprobante.
+El layout sigue las maquetas del **Anexo 2 de la Ficha Técnica** del SRI: cabecera de dos columnas (logo y datos del emisor a la izquierda; R.U.C., nombre del comprobante, autorización y clave de acceso a la derecha), banda del sujeto a todo el ancho, tabla de detalles y pie de dos columnas con la información adicional y las formas de pago a la izquierda y los totales a la derecha.
+
+Bajo el rótulo `CLAVE DE ACCESO` se imprime un **código de barras Code 128** con los 49 dígitos de la clave debajo, que es lo que muestra la maqueta oficial (la nota al pie de la página 56 aclara que el código de barras es opcional: `codigoBarras: false` lo omite sin quitar la clave impresa). El código de barras se dibuja con vectores y solo necesita `pdfkit`. `incluirQr: true` añade el QR de v0.2.0 como alternativa —requiere la dependencia opcional `qrcode`— y codifica la misma clave de acceso: es lo único que el portal de verificación del SRI necesita para consultar el comprobante.
 
 `autorizacion` es opcional: el SRI autoriza de forma asíncrona, así que si el RIDE se imprime antes de recibir la respuesta (o la autorización nunca llegó), el PDF se genera igual — con la cabecera marcada como **"NO AUTORIZADO"** en vez de mostrar número y fecha de autorización.
 

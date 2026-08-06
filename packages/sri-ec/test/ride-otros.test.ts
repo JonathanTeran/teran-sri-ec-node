@@ -91,6 +91,17 @@ const claveRetencion = generarClaveAcceso({
   codigoNum: '12345678',
 });
 
+/**
+ * Texto sin NINGÚN espacio en blanco. El nombre del documento se imprime con
+ * espaciado entre letras (`F A C T U R A`, maqueta del Anexo 2), y pdfjs lo
+ * extrae con esos espacios intercalados: comparar sin espacios verifica que el
+ * nombre está impreso sin depender de cómo el extractor represente el
+ * espaciado.
+ */
+function sinEspacios(texto: string): string {
+  return texto.replace(/\s+/g, '');
+}
+
 describe('ride: liquidación de compra', () => {
   it('genera un PDF con los datos del proveedor, la tabla de detalle, formas de pago y totales', async () => {
     const pdf = await generarRide({
@@ -105,7 +116,7 @@ describe('ride: liquidación de compra', () => {
     // Compartidos: razón social, RUC, número de comprobante, clave de acceso.
     expect(texto).toContain('COMERCIAL AMEPHIA S.A.');
     expect(texto).toContain('1790011001001');
-    expect(texto).toContain('LIQUIDACIÓN DE COMPRA');
+    expect(sinEspacios(texto)).toContain(sinEspacios('LIQUIDACIÓN DE COMPRA'));
     expect(texto).toContain('001-001-000000002');
     expect(claveLiquidacionCompra).toHaveLength(49);
     expect(texto).toContain(claveLiquidacionCompra);
@@ -117,17 +128,20 @@ describe('ride: liquidación de compra', () => {
     // Detalle: cada descripción — prueba que `drawTablaDetalles` renderizó
     // las filas (no solo el encabezado de columnas, que se dibuja siempre).
     for (const detalle of liquidacionCompraFixture.detalles) {
-      expect(texto).toContain(detalle.descripcion);
+      // La columna `Descripción` de la maqueta es estrecha (12 columnas en el
+      // detalle), así que una descripción larga se envuelve y pdfjs la extrae
+      // partida en varias líneas: se compara sin espacios.
+      expect(sinEspacios(texto)).toContain(sinEspacios(detalle.descripcion));
     }
     // Formas de pago: encabezado + forma de pago decodificada. `importeTotal`
     // ('56.00') por sí solo no distingue este bloque del de "Totales" —en
     // este fixture un solo pago cubre el total, así que ambos bloques
     // imprimen el mismo número; el encabezado y la etiqueta decodificada solo
     // los imprime `drawFormasPago`.
-    expect(texto).toContain('FORMAS DE PAGO');
+    expect(texto).toContain('Forma de Pago');
     expect(texto).toContain('Sin utilización del sistema financiero'); // LABEL_FORMA_PAGO[FormaPago.EFECTIVO]
     // Totales.
-    expect(texto).toContain('TOTALES');
+    expect(texto).toContain('SUBTOTAL SIN IMPUESTOS');
     expect(texto).toContain(liquidacionCompraFixture.importeTotal);
   });
 });
@@ -144,7 +158,7 @@ describe('ride: nota de crédito', () => {
     const texto = await extraerTextoPdf(pdf);
 
     expect(texto).toContain('COMERCIAL AMEPHIA S.A.');
-    expect(texto).toContain('NOTA DE CRÉDITO');
+    expect(sinEspacios(texto)).toContain(sinEspacios('NOTA DE CRÉDITO'));
     expect(texto).toContain('001-001-000000003');
     expect(claveNotaCredito).toHaveLength(49);
     expect(texto).toContain(claveNotaCredito);
@@ -161,12 +175,15 @@ describe('ride: nota de crédito', () => {
     expect(texto).toContain(notaCreditoFixture.motivo);
     // Detalle: cada descripción.
     for (const detalle of notaCreditoFixture.detalles) {
-      expect(texto).toContain(detalle.descripcion);
+      // La columna `Descripción` de la maqueta es estrecha (12 columnas en el
+      // detalle), así que una descripción larga se envuelve y pdfjs la extrae
+      // partida en varias líneas: se compara sin espacios.
+      expect(sinEspacios(texto)).toContain(sinEspacios(detalle.descripcion));
     }
     // Totales: `valorModificacion` hace de "VALOR TOTAL" — a diferencia de
     // liquidación de compra, esta nota no tiene `pagos`, así que este valor
     // no coincide con ningún otro bloque en este fixture.
-    expect(texto).toContain('TOTALES');
+    expect(texto).toContain('SUBTOTAL SIN IMPUESTOS');
     expect(texto).toContain(notaCreditoFixture.valorModificacion);
   });
 });
@@ -183,7 +200,7 @@ describe('ride: nota de débito', () => {
     const texto = await extraerTextoPdf(pdf);
 
     expect(texto).toContain('COMERCIAL AMEPHIA S.A.');
-    expect(texto).toContain('NOTA DE DÉBITO');
+    expect(sinEspacios(texto)).toContain(sinEspacios('NOTA DE DÉBITO'));
     expect(texto).toContain('001-001-000000004');
     expect(claveNotaDebito).toHaveLength(49);
     expect(texto).toContain(claveNotaDebito);
@@ -197,10 +214,10 @@ describe('ride: nota de débito', () => {
     // manual: comentando la llamada a `drawFormasPago` en
     // `nota-debito.ride.ts` este test seguía en verde sin este assert (ver
     // task-2-report.md, sección de la revisión).
-    expect(texto).toContain('FORMAS DE PAGO');
+    expect(texto).toContain('Forma de Pago');
     expect(texto).toContain('Sin utilización del sistema financiero'); // LABEL_FORMA_PAGO[FormaPago.EFECTIVO]
     // Totales.
-    expect(texto).toContain('TOTALES');
+    expect(texto).toContain('SUBTOTAL SIN IMPUESTOS');
     expect(texto).toContain(notaDebitoFixture.valorTotal);
   });
 
@@ -246,7 +263,7 @@ describe('ride: guía de remisión', () => {
     const texto = await extraerTextoPdf(pdf);
 
     expect(texto).toContain('COMERCIAL AMEPHIA S.A.');
-    expect(texto).toContain('GUÍA DE REMISIÓN');
+    expect(sinEspacios(texto)).toContain(sinEspacios('GUÍA DE REMISIÓN'));
     expect(texto).toContain('001-001-000000005');
     expect(claveGuiaRemision).toHaveLength(49);
     expect(texto).toContain(claveGuiaRemision);
@@ -270,7 +287,10 @@ describe('ride: guía de remisión', () => {
       expect(texto).toContain('DATOS DEL TRASLADO');
       expect(texto).toContain(destinatario.motivoTraslado);
       for (const detalle of destinatario.detalles) {
-        expect(texto).toContain(detalle.descripcion);
+        // La columna `Descripción` de la maqueta es estrecha (12 columnas en el
+      // detalle), así que una descripción larga se envuelve y pdfjs la extrae
+      // partida en varias líneas: se compara sin espacios.
+      expect(sinEspacios(texto)).toContain(sinEspacios(detalle.descripcion));
       }
     }
   });
@@ -331,7 +351,7 @@ describe('ride: retención', () => {
     const texto = await extraerTextoPdf(pdf);
 
     expect(texto).toContain('AGENTE RETENCION S.A.');
-    expect(texto).toContain('COMPROBANTE DE RETENCIÓN');
+    expect(sinEspacios(texto)).toContain(sinEspacios('COMPROBANTE DE RETENCIÓN'));
     expect(texto).toContain('001-001-000000006');
     expect(claveRetencion).toHaveLength(49);
     expect(texto).toContain(claveRetencion);
