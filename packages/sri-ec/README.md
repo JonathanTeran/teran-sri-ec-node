@@ -12,7 +12,7 @@ Es el port oficial de [`amephia/sri-ec`](https://packagist.org/packages/amephia/
 ## Características
 
 - Los **6 comprobantes electrónicos**: Factura (`01`), Liquidación de Compra (`03`), Nota de Crédito (`04`), Nota de Débito (`05`), Guía de Remisión (`06`) y Comprobante de Retención (`07`).
-- **RIDE (PDF + QR)** de los 6 comprobantes vía el subpath opcional `sri-ec/ride` (`npm install pdfkit qrcode` — ver [RIDE](#ride-pdf--qr)).
+- **RIDE conforme al Anexo 2 del SRI** (PDF con código de barras Code 128 por defecto; QR opcional) de los 6 comprobantes vía el subpath opcional `sri-ec/ride` (`npm install pdfkit` — añade `qrcode` solo si usas `incluirQr: true`; ver [RIDE](#ride-pdf--qr)).
 - Certificados `.p12`/`.pfx` **modernos y legacy** (RC2/3DES pre-2024), sin depender de la versión de OpenSSL del sistema.
 - Firma **RSA y ECDSA**, digest configurable (`sha1` por defecto — lo que el SRI valida hoy — o `sha256`).
 - Validación **estructural** (zod) y **de negocio** (coherencia aritmética de totales, impuestos y retenciones).
@@ -143,7 +143,11 @@ La referencia completa (envío masivo, transporte propio, troubleshooting de zon
 
 ## RIDE (PDF + QR)
 
-El RIDE (PDF con código QR de la clave de acceso) de los 6 comprobantes vive en el subpath opcional `sri-ec/ride`, para que emitir/firmar no pague el costo de sus dependencias. Instala `pdfkit` y `qrcode` solo si vas a generarlo:
+El RIDE de los 6 comprobantes reproduce la maqueta oficial del **Anexo 2 de la Ficha Técnica del SRI** y vive en el subpath opcional `sri-ec/ride`, para que emitir/firmar no pague el costo de sus dependencias.
+
+> **Cambio en 0.3.0**: el predeterminado pasó de QR (`incluirQr: true` en 0.2.0) a **código de barras Code 128** (`codigoBarras: true`), conforme a la maqueta oficial. Si vienes de 0.2.0 y quieres seguir generando el QR, pasa `opciones: { incluirQr: true }` explícitamente.
+
+Con las opciones por defecto solo hace falta `pdfkit`; instala también `qrcode` solo si vas a usar `incluirQr: true`:
 
 ```bash
 npm install pdfkit qrcode
@@ -160,12 +164,16 @@ const pdf: Uint8Array = await generarRide({
     resultado.status === 'AUTORIZADO'
       ? { numero: resultado.numeroAutorizacion!, fecha: resultado.fechaAutorizacion! }
       : undefined, // opcional: sin ella, el RIDE sale marcado "NO AUTORIZADO"
+  opciones: {
+    codigoBarras: true, // Code 128 bajo CLAVE DE ACCESO, default true
+    incluirQr: false, // QR alternativo (requiere `qrcode`), default false
+  },
 });
 
 writeFileSync('factura.pdf', pdf);
 ```
 
-Si `pdfkit`/`qrcode` no están instalados al llamar a `generarRide()`, se lanza un `SriError` con el mensaje exacto de qué instalar, en vez del error crudo de Node. El QR codifica la clave de acceso de 49 dígitos — lo que el portal del SRI necesita para verificar el comprobante. Detalle completo (todas las opciones, atajos por tipo) en el [README del repositorio](https://github.com/JonathanTeran/teran-sri-ec-node#-ride-pdf--qr).
+Si `pdfkit`/`qrcode` no están instalados al llamar a `generarRide()`, se lanza un `SriError` con el mensaje exacto de qué instalar, en vez del error crudo de Node. Detalle completo (todas las opciones, las etiquetas exactas de cada maqueta, atajos por tipo) en el [README del repositorio](https://github.com/JonathanTeran/teran-sri-ec-node#-ride-pdf--qr).
 
 ## NestJS
 
