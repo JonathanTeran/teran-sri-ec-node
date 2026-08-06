@@ -39,6 +39,18 @@ async function cargarBloqueTotales() {
 }
 
 /**
+ * Texto sin NINGÚN espacio en blanco. El nombre del documento se imprime con
+ * espaciado entre letras (`F A C T U R A`, maqueta del Anexo 2, página 56) y
+ * pdfjs lo extrae con esos espacios intercalados, así que comparar el nombre
+ * "tal cual" fallaría aunque el PDF sea correcto. Comparar sin espacios
+ * verifica exactamente lo que importa —que el nombre está impreso— sin
+ * depender de cómo el extractor represente el espaciado.
+ */
+function sinEspacios(texto: string): string {
+  return texto.replace(/\s+/g, '');
+}
+
+/**
  * Misma clave de acceso (mismos parámetros) que `test/xml-factura.test.ts`
  * usa para `facturaFixture` — 49 dígitos reales de Módulo 11, no un string
  * inventado, para que el test de extracción de texto verifique la clave que
@@ -99,7 +111,7 @@ describe('ride: factura', () => {
     expect(texto).toContain('COMERCIAL AMEPHIA S.A.');
     // Comprobante: RUC, nombre del documento, número `estab-ptoEmi-secuencial`, clave de acceso.
     expect(texto).toContain('1790011001001');
-    expect(texto).toContain('FACTURA');
+    expect(sinEspacios(texto)).toContain('FACTURA');
     expect(texto).toContain('001-001-000000001');
     expect(claveAcceso).toHaveLength(49);
     expect(texto).toContain(claveAcceso);
@@ -332,11 +344,12 @@ describe('ride: factura', () => {
     });
     const { generarRide, SriError } = await cargarRide();
 
-    // incluirQr por defecto es true: sin qrcode instalado, debe fallar con el mismo mensaje.
-    await expect(generarRide({ documento: facturaFixture, claveAcceso })).rejects.toThrow(SriError);
-    await expect(generarRide({ documento: facturaFixture, claveAcceso })).rejects.toThrow(
-      /npm install pdfkit qrcode/,
-    );
+    // Desde 0.3.0 el predeterminado es el código de barras Code 128 (que solo
+    // necesita pdfkit) y `incluirQr` es opt-in, así que el QR —y con él la
+    // dependencia `qrcode`— solo se exige a quien la pide explícitamente.
+    const conQr = { documento: facturaFixture, claveAcceso, opciones: { incluirQr: true } };
+    await expect(generarRide(conQr)).rejects.toThrow(SriError);
+    await expect(generarRide(conQr)).rejects.toThrow(/npm install pdfkit qrcode/);
   });
 
   /**
@@ -375,7 +388,11 @@ describe('ride: factura', () => {
     });
     const { generarRide, SriError } = await cargarRide();
 
-    const error: unknown = await generarRide({ documento: facturaFixture, claveAcceso }).catch((e) => e);
+    const error: unknown = await generarRide({
+      documento: facturaFixture,
+      claveAcceso,
+      opciones: { incluirQr: true },
+    }).catch((e) => e);
 
     expect(error).not.toBeInstanceOf(SriError);
     expect((error as { cause?: { message?: string } }).cause?.message).toContain(
@@ -383,7 +400,7 @@ describe('ride: factura', () => {
     );
   });
 
-  it('drawTotales omite "Total descuento" cuando TotalesRide.totalDescuento está ausente (fix round 1, hallazgo confirmado del reviewer)', async () => {
+  it('drawTotales omite "DESCUENTO" cuando TotalesRide.totalDescuento está ausente (fix round 1, hallazgo confirmado del reviewer)', async () => {
     const { crearDocumentoRide, drawTotales } = await cargarBloqueTotales();
     const { doc, finalizar } = await crearDocumentoRide('A4');
 
@@ -399,11 +416,11 @@ describe('ride: factura', () => {
     );
 
     const texto = await extraerTextoPdf(await finalizar());
-    expect(texto).not.toContain('Total descuento');
+    expect(texto).not.toContain('DESCUENTO');
     expect(texto).toContain('VALOR TOTAL');
   });
 
-  it('drawTotales sigue emitiendo "Total descuento" cuando sí está presente', async () => {
+  it('drawTotales sigue emitiendo "DESCUENTO" cuando sí está presente', async () => {
     const { crearDocumentoRide, drawTotales } = await cargarBloqueTotales();
     const { doc, finalizar } = await crearDocumentoRide('A4');
 
@@ -419,7 +436,7 @@ describe('ride: factura', () => {
     );
 
     const texto = await extraerTextoPdf(await finalizar());
-    expect(texto).toContain('Total descuento');
+    expect(texto).toContain('DESCUENTO');
     expect(texto).toContain('5.00');
   });
 
@@ -490,11 +507,11 @@ describe('ride: factura', () => {
     );
 
     const texto = await extraerTextoPdf(await finalizar());
-    expect(texto).toContain('Otro impuesto (código 99)');
+    expect(texto).toContain('OTRO IMPUESTO (CÓDIGO 99)');
     expect(texto).toContain('3.00');
   });
 
-  it('drawTotales imprime Moneda cuando viene en TotalesRide (auditoría "campos fiscales omitidos": moneda nunca se leía)', async () => {
+  it('drawTotales imprime MONEDA cuando viene en TotalesRide (auditoría "campos fiscales omitidos": moneda nunca se leía)', async () => {
     const { crearDocumentoRide, drawTotales } = await cargarBloqueTotales();
     const { doc, finalizar } = await crearDocumentoRide('A4');
 
@@ -510,7 +527,7 @@ describe('ride: factura', () => {
     );
 
     const texto = await extraerTextoPdf(await finalizar());
-    expect(texto).toContain('Moneda');
+    expect(texto).toContain('MONEDA');
     expect(texto).toContain('DOLAR');
   });
 
@@ -525,9 +542,12 @@ describe('ride: factura', () => {
     const pdf = await generarRide({ documento: facturaFixture, claveAcceso });
     const texto = await extraerTextoPdf(pdf);
 
-    expect(texto).toContain('Moneda');
+    expect(texto).toContain('MONEDA');
     expect(texto).toContain(facturaFixture.moneda as string);
-    expect(texto).toContain(`Identificación: ${facturaFixture.identificacionComprador} (Cédula de Identidad)`);
+    // Etiqueta y valor van en columnas separadas de la banda del sujeto
+    // (maqueta del Anexo 2), así que ya no salen unidos por dos puntos.
+    expect(texto).toContain('Identificación:');
+    expect(texto).toContain(`${facturaFixture.identificacionComprador} (Cédula de Identidad)`);
   });
 
   /**
@@ -535,14 +555,14 @@ describe('ride: factura', () => {
    * no debe dejar una etiqueta colgante ("Razón Social / Nombres:" sin
    * nada) — se omite la línea entera en vez de imprimir un `:` suelto.
    */
-  it('un comprador con razonSocial vacía no deja la etiqueta "Razón Social / Nombres:" colgando sin valor', async () => {
+  it('un comprador con razonSocial vacía no deja la etiqueta "Razón Social / Nombres y Apellidos:" colgando sin valor', async () => {
     const { generarRide } = await cargarRide();
 
     const facturaSinNombreComprador: Factura = { ...facturaFixture, razonSocialComprador: '' };
     const pdf = await generarRide({ documento: facturaSinNombreComprador, claveAcceso });
     const texto = await extraerTextoPdf(pdf);
 
-    expect(texto).not.toContain('Razón Social / Nombres:');
+    expect(texto).not.toContain('Razón Social / Nombres y Apellidos:');
   });
 
   /**
@@ -560,6 +580,132 @@ describe('ride: factura', () => {
     const pdf = await generarRide({ documento: facturaConCampoVacio, claveAcceso });
     const texto = await extraerTextoPdf(pdf);
 
-    expect(texto).not.toContain('Observacion:');
+    expect(texto).not.toContain('Observacion');
+  });
+});
+
+/**
+ * Conformidad con la maqueta OFICIAL del **Anexo 2** de la Ficha Técnica del
+ * SRI (página 56, factura). A diferencia del resto de tests de este archivo
+ * —que comprueban que los DATOS del documento llegan al PDF—, estos fijan las
+ * ETIQUETAS LITERALES y el orden del formato oficial: si alguien vuelve a
+ * redactar una fila "a su manera" (que es lo que hacía el RIDE v0.2.0), el
+ * RIDE deja de parecerse a uno real y estos tests lo detectan.
+ */
+describe('ride: factura conforme al Anexo 2', () => {
+  beforeEach(() => {
+    vi.resetModules();
+    vi.doUnmock('pdfkit');
+    vi.doUnmock('qrcode');
+  });
+
+  /** Rótulos literales de la cabecera y la banda del sujeto (maqueta p.56). */
+  const ETIQUETAS_CABECERA = [
+    'R.U.C.:',
+    'No.',
+    'NÚMERO DE AUTORIZACIÓN',
+    'FECHA Y HORA DE AUTORIZACIÓN',
+    'AMBIENTE:',
+    'EMISIÓN:',
+    'CLAVE DE ACCESO',
+    'Dirección Matriz:',
+    'OBLIGADO A LLEVAR CONTABILIDAD',
+    'Razón Social / Nombres y Apellidos:',
+    'Identificación:',
+    'Fecha Emisión:',
+  ];
+
+  /**
+   * Encabezados literales de la tabla de detalle (12 columnas de la maqueta).
+   * Los tres primeros van ABREVIADOS: es lo que imprime la página 56, a
+   * diferencia de la nota de crédito (57) y la liquidación de compra (61), que
+   * los escriben enteros (ver `ride-otros.test.ts`).
+   */
+  const ENCABEZADOS_DETALLE = [
+    'Cod. Principal',
+    'Cod. Auxiliar',
+    'Cant.',
+    'Descripción',
+    'Detalle Adicional',
+    'Precio Unitario',
+    'Subsidio',
+    'Precio Sin Subsidio',
+    'Descuento',
+    'Precio Total',
+  ];
+
+  /** Filas literales del pie, en el orden de la maqueta. */
+  const ETIQUETAS_PIE = [
+    'Información Adicional',
+    'Forma de Pago',
+    'Valor',
+    'SUBTOTAL IVA 0%',
+    'SUBTOTAL NO OBJETO IVA',
+    'SUBTOTAL EXENTO IVA',
+    'SUBTOTAL SIN IMPUESTOS',
+    'DESCUENTO',
+    'PROPINA',
+    'VALOR TOTAL',
+    'VALOR TOTAL SIN SUBSIDIO',
+    'AHORRO POR SUBSIDIO',
+  ];
+
+  it('imprime las etiquetas literales de la cabecera, el detalle y el pie', async () => {
+    const { generarRide } = await cargarRide();
+
+    const pdf = await generarRide({
+      documento: facturaFixture,
+      claveAcceso,
+      autorizacion: { numero: claveAcceso, fecha: '03/08/2026 10:00:00' },
+    });
+    const texto = await extraerTextoPdf(pdf);
+    const compacto = sinEspacios(texto);
+
+    for (const etiqueta of [...ETIQUETAS_CABECERA, ...ENCABEZADOS_DETALLE, ...ETIQUETAS_PIE]) {
+      // Sin espacios: varios rótulos ("Precio Sin Subsidio", "FECHA Y HORA DE
+      // AUTORIZACIÓN") envuelven a dos o tres líneas dentro de su celda, igual
+      // que en la maqueta, y pdfjs los extrae partidos.
+      expect(compacto, `falta la etiqueta oficial "${etiqueta}"`).toContain(sinEspacios(etiqueta));
+    }
+
+    // Tres columnas `Detalle Adicional`, no una.
+    expect(texto.match(/Detalle\s+Adicional/g)?.length).toBe(3);
+
+    // El porcentaje del IVA sale del `codigoPorcentaje` del documento
+    // (`'4'` = 15%), no está escrito a fuego: las maquetas de 2017 dicen 12%.
+    expect(compacto).toContain(sinEspacios('SUBTOTAL 15%'));
+    expect(compacto).toContain(sinEspacios('IVA 15%'));
+  });
+
+  it('el nombre del documento va con espaciado entre letras ("F A C T U R A")', async () => {
+    const { generarRide } = await cargarRide();
+
+    const texto = await extraerTextoPdf(await generarRide({ documento: facturaFixture, claveAcceso }));
+
+    // pdfjs materializa el `characterSpacing` como espacios reales entre
+    // glifos: si alguien quitara el espaciado, esta cadena desaparecería.
+    expect(texto).toContain('F A C T U R A');
+  });
+
+  it('sin autorización, la cabecera conserva el rótulo oficial y marca el comprobante como no autorizado', async () => {
+    const { generarRide } = await cargarRide();
+
+    const texto = await extraerTextoPdf(await generarRide({ documento: facturaFixture, claveAcceso }));
+
+    expect(texto).toContain('NÚMERO DE AUTORIZACIÓN');
+    expect(texto).toContain('COMPROBANTE NO AUTORIZADO');
+    // Sin autorización no hay fecha que imprimir: la fila no queda colgando.
+    expect(texto).not.toContain('FECHA Y HORA DE AUTORIZACIÓN');
+  });
+
+  it('los 49 dígitos de la clave se imprimen íntegros bajo el código de barras, sin partirse', async () => {
+    const { generarRide } = await cargarRide();
+
+    const texto = await extraerTextoPdf(await generarRide({ documento: facturaFixture, claveAcceso }));
+
+    // La clave no tiene espacios donde pdfkit pueda cortar: si la celda fuera
+    // estrecha y no se encogiera la fuente, saldría partida en dos `TextItem`
+    // y el texto extraído tendría un espacio en medio.
+    expect(texto).toContain(claveAcceso);
   });
 });

@@ -2,21 +2,14 @@ import { TipoEmision } from '../catalogs/index.js';
 import type { Factura } from '../documents/index.js';
 import {
   asegurarEspacio,
-  drawBloquesEnFila,
+  drawCabecera,
   drawComprador,
-  drawComprobante,
-  drawEmisor,
-  drawFormasPago,
-  drawInfoAdicional,
+  drawPie,
   drawTablaDetalles,
-  drawTotales,
   formatNumeroComprobante,
+  medirCabecera,
   medirComprador,
-  medirComprobante,
-  medirEmisor,
-  medirFormasPago,
-  medirInfoAdicional,
-  medirTotales,
+  medirPie,
   nombreDocumento,
 } from './blocks.js';
 import { crearDocumentoRide } from './pdf-doc.js';
@@ -25,22 +18,25 @@ import type { ComprobanteRide, CompradorRide, EmisorRide, RideOptions, TotalesRi
 
 /** Separación vertical entre bloques apilados. */
 const ESPACIADO_BLOQUE = 10;
-/** Proporción del ancho útil que ocupa la columna del emisor en la cabecera (el resto es "comprobante"). */
-const PROPORCION_EMISOR = 0.55;
-/** Proporción del ancho útil que ocupa "formas de pago" antes de "totales". */
-const PROPORCION_FORMAS_PAGO = 0.5;
 
 /**
- * RIDE de Factura (codDoc `01`). Arma los tipos normalizados de `types.ts` a
- * partir del `Factura` de `documents/factura.ts` y compone los 7 bloques de
- * `blocks.ts`: es el único `*.ride.ts` de la Task 1 — el patrón que sigue
- * (mapear el documento a `EmisorRide`/`ComprobanteRide`/`CompradorRide`/
- * `TotalesRide`, generar el QR una sola vez y encadenar los `draw*` con
- * `AreaRide`) es exactamente lo que Task 2 replica para los otros 5 tipos.
+ * RIDE de Factura (codDoc `01`), conforme a la maqueta de la **página 56 del
+ * Anexo 2** de la Ficha Técnica del SRI. Arma los tipos normalizados de
+ * `types.ts` a partir del `Factura` de `documents/factura.ts` y compone los
+ * cuatro bloques del Anexo 2: cabecera de dos columnas, banda del comprador,
+ * tabla de detalles y pie de dos columnas.
+ *
+ * Es el patrón que Task 2 replica para los otros 5 tipos: mapear el documento a
+ * `EmisorRide`/`ComprobanteRide`/`CompradorRide`/`TotalesRide`, y encadenar
+ * `drawCabecera` → banda propia → `drawTablaDetalles` → `drawPie`, midiendo
+ * cada bloque con su `medir*` antes de dibujarlo.
  */
 export async function generarRideFactura(opciones: RideOptions<Factura>): Promise<Uint8Array> {
   const { documento, claveAcceso, autorizacion, logo } = opciones;
-  const incluirQr = opciones.opciones?.incluirQr ?? true;
+  // El código de barras Code 128 es el predeterminado (es lo que imprime la
+  // maqueta); el QR de v0.2.0 queda como alternativa opt-in.
+  const codigoBarras = opciones.opciones?.codigoBarras ?? true;
+  const incluirQr = opciones.opciones?.incluirQr ?? false;
   const tamano = opciones.opciones?.tamano ?? 'A4';
 
   const { doc, finalizar } = await crearDocumentoRide(tamano);
@@ -49,10 +45,6 @@ export async function generarRideFactura(opciones: RideOptions<Factura>): Promis
   const margenX = doc.page.margins.left;
   const anchoUtil = doc.page.width - doc.page.margins.left - doc.page.margins.right;
   let y = doc.page.margins.top;
-
-  // Cabecera: emisor (izquierda) + comprobante con QR (derecha), misma fila.
-  const anchoEmisor = Math.floor(anchoUtil * PROPORCION_EMISOR);
-  const anchoComprobante = anchoUtil - anchoEmisor;
 
   const emisor: EmisorRide = {
     logo,
@@ -77,19 +69,13 @@ export async function generarRideFactura(opciones: RideOptions<Factura>): Promis
     claveAcceso,
     autorizacion,
   };
-  y =
-    drawBloquesEnFila(
-      doc,
-      y,
-      medirEmisor(doc, emisor, anchoEmisor),
-      medirComprobante(doc, comprobante, anchoComprobante, qr !== undefined),
-      (yFila) => drawEmisor(doc, emisor, { x: margenX, y: yFila, width: anchoEmisor }),
-      (yFila) =>
-        drawComprobante(doc, comprobante, { x: margenX + anchoEmisor, y: yFila, width: anchoComprobante }, qr),
-      ESPACIADO_BLOQUE,
-    ) + ESPACIADO_BLOQUE;
+  // Cabecera de dos columnas: logo + emisor (izquierda), comprobante con el
+  // código de barras de la clave de acceso (derecha), ambas a la misma altura.
+  const cabecera = { emisor, comprobante, qr, codigoBarras };
+  y = asegurarEspacio(doc, y, medirCabecera(doc, cabecera, anchoUtil));
+  y = drawCabecera(doc, cabecera, { x: margenX, y, width: anchoUtil }) + ESPACIADO_BLOQUE;
 
-  // Comprador.
+  // Banda del comprador, a todo el ancho.
   const comprador: CompradorRide = {
     razonSocial: documento.razonSocialComprador,
     identificacion: documento.identificacionComprador,
@@ -104,10 +90,8 @@ export async function generarRideFactura(opciones: RideOptions<Factura>): Promis
   // Detalle (`drawTablaDetalles` reserva su propio espacio: es dueña de su paginación fila a fila).
   y = drawTablaDetalles(doc, documento.detalles, { x: margenX, y, width: anchoUtil }) + ESPACIADO_BLOQUE;
 
-  // Formas de pago (izquierda) + totales (derecha), misma fila.
-  const anchoFormasPago = Math.floor(anchoUtil * PROPORCION_FORMAS_PAGO);
-  const anchoTotales = anchoUtil - anchoFormasPago;
-
+  // Pie de dos columnas: información adicional + formas de pago (izquierda),
+  // totales y recuadro de subsidios (derecha).
   const totales: TotalesRide = {
     impuestos: documento.totalConImpuestos,
     totalSinImpuestos: documento.totalSinImpuestos,
@@ -115,22 +99,15 @@ export async function generarRideFactura(opciones: RideOptions<Factura>): Promis
     propina: documento.propina,
     importeTotal: documento.importeTotal,
     moneda: documento.moneda,
+    // `PROPINA` y el recuadro de subsidios son filas fijas de la maqueta de la
+    // factura (los otros comprobantes no las llevan).
+    conPropina: true,
+    conSubsidio: true,
   };
 
-  y =
-    drawBloquesEnFila(
-      doc,
-      y,
-      medirFormasPago(doc, documento.pagos, anchoFormasPago),
-      medirTotales(doc, totales, anchoTotales),
-      (yFila) => drawFormasPago(doc, documento.pagos, { x: margenX, y: yFila, width: anchoFormasPago }),
-      (yFila) => drawTotales(doc, totales, { x: margenX + anchoFormasPago, y: yFila, width: anchoTotales }),
-      ESPACIADO_BLOQUE,
-    ) + ESPACIADO_BLOQUE;
-
-  // Información adicional.
-  y = asegurarEspacio(doc, y, medirInfoAdicional(doc, documento.infoAdicional, anchoUtil));
-  drawInfoAdicional(doc, documento.infoAdicional, { x: margenX, y, width: anchoUtil });
+  const pie = { infoAdicional: documento.infoAdicional, pagos: documento.pagos, totales };
+  y = asegurarEspacio(doc, y, medirPie(doc, pie, anchoUtil));
+  drawPie(doc, pie, { x: margenX, y, width: anchoUtil });
 
   return finalizar();
 }

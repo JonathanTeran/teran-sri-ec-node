@@ -1,13 +1,15 @@
 /**
  * Ejemplo: emitir una Factura contra el ambiente de PRUEBAS del SRI y generar
- * su RIDE (PDF con QR) a partir del resultado.
+ * su RIDE (PDF conforme al Anexo 2 del SRI, con código de barras Code 128 por
+ * defecto) a partir del resultado.
  *
  * El RIDE vive en el subpath opcional `sri-ec/ride`: el core de `sri-ec`
  * (usado en `emitir-factura.ts`) no lo importa nunca, así que quien solo
- * emite/firma comprobantes no paga el costo de `pdfkit`/`qrcode`. Este
- * ejemplo sí los necesita — instálalos antes de ejecutarlo:
+ * emite/firma comprobantes no paga el costo de `pdfkit`. Este ejemplo sí lo
+ * necesita — instálalo antes de ejecutarlo (`qrcode` solo hace falta si se
+ * pasa `opciones: { incluirQr: true }`, ver README):
  *
- *   npm install pdfkit qrcode
+ *   npm install pdfkit
  *
  * ADVERTENCIA: este ejemplo SÍ contacta el servicio real de pruebas del SRI
  * (https://celcer.sri.gob.ec) — no es un mock. Necesita un certificado .p12

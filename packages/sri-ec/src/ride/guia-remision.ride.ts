@@ -3,41 +3,48 @@ import type { Destinatario, DestinatarioDetalle, GuiaRemision } from '../documen
 import {
   asegurarEspacio,
   construirColumnas,
-  drawBloqueTexto,
-  drawBloquesEnFila,
-  drawComprador,
-  drawComprobante,
-  drawEmisor,
-  drawInfoAdicional,
+  drawBandaSujeto,
+  drawCabecera,
+  drawPie,
   drawTablaGenerica,
   formatCantidadPrecision,
   formatNumeroComprobante,
-  medirBloqueTexto,
-  medirComprador,
-  medirComprobante,
-  medirEmisor,
-  medirInfoAdicional,
+  identificacionConTipo,
+  medirBandaSujeto,
+  medirCabecera,
+  medirPie,
   nombreDocumento,
+  nombreDocumentoPorCodigo,
 } from './blocks.js';
+import type { FilaBanda } from './blocks.js';
 import { crearDocumentoRide } from './pdf-doc.js';
 import { generarQr } from './qr.js';
-import type { ComprobanteRide, CompradorRide, EmisorRide, RideOptions } from './types.js';
+import type { ComprobanteRide, EmisorRide, RideOptions } from './types.js';
 
 /** Separación vertical entre bloques apilados. */
 const ESPACIADO_BLOQUE = 10;
-/** Proporción del ancho útil que ocupa la columna del emisor en la cabecera (el resto es "comprobante"). */
-const PROPORCION_EMISOR = 0.55;
 
-/** Títulos de los dos bloques de texto propios de la guía de remisión. */
-const TITULO_TRANSPORTISTA = 'TRANSPORTISTA';
-const TITULO_TRASLADO = 'DATOS DEL TRASLADO';
+/**
+ * Reparto de las filas de la guía que llevan DOS pares (`Fecha inicio
+ * Transporte` / `Fecha fin Transporte`, `Comprobante de Venta:` / `Fecha de
+ * Emisión:`). El reparto por defecto de la banda está afinado para la del
+ * comprador, cuya etiqueta derecha es corta (`Identificación:`); aquí las dos
+ * etiquetas son largas y los dos valores, cortos.
+ */
+const FRACCIONES_DOS_PARES = [0.26, 0.32, 0.19, 0.23] as const;
 
-/** Columnas del detalle de un destinatario: shape distinto al `Detalle` compartido (sin precio unitario ni impuestos). */
-const DESTINATARIO_DETALLE_COLUMN_SPECS: Array<[string, number, 'left' | 'right']> = [
-  ['Cód. Interno', 0.18, 'left'],
-  ['Cód. Adicional', 0.18, 'left'],
-  ['Descripción', 0.5, 'left'],
-  ['Cantidad', 0.14, 'right'],
+/**
+ * Columnas del detalle de un destinatario, con los encabezados y el ORDEN
+ * literales de la maqueta de la **página 60** (`Cantidad`, `Descripcion` —sin
+ * tilde, como el original—, `Código Principal`, `Código Auxiliar`). Es un
+ * shape distinto del `Detalle` compartido: no hay precio unitario ni
+ * impuestos, porque una guía de remisión no lleva montos.
+ */
+const DESTINATARIO_DETALLE_COLUMN_SPECS: Array<[string, number, 'left' | 'center' | 'right']> = [
+  ['Cantidad', 0.12, 'right'],
+  ['Descripcion', 0.48, 'left'],
+  ['Código Principal', 0.2, 'left'],
+  ['Código Auxiliar', 0.2, 'left'],
 ];
 
 /**
@@ -54,64 +61,83 @@ function celdasDestinatarioDetalle(d: DestinatarioDetalle): string[] {
         .join('\n')}`
     : '';
   return [
+    formatCantidadPrecision(d.cantidad),
+    `${d.descripcion}${extras}`,
     d.codigoInterno ?? '',
     d.codigoAdicional ?? '',
-    `${d.descripcion}${extras}`,
-    formatCantidadPrecision(d.cantidad),
   ];
 }
 
 /**
- * Líneas del bloque "datos del traslado" de un destinatario: motivo
- * (obligatorio), documento sustento (+ su número de autorización, si viene),
- * documento aduanero único, código de establecimiento destino y ruta (los
- * últimos cuatro, si vienen).
+ * Filas de la banda de un destinatario, con las etiquetas literales de la
+ * maqueta de la página 60 y en su orden: comprobante de venta que sustenta el
+ * traslado (+ fecha de emisión en la misma fila), número de autorización,
+ * motivo, destino, identificación y razón social del destinatario, documento
+ * aduanero, código de establecimiento destino y ruta.
  *
- * `numAutDocSustento`/`codEstabDestino` (auditoría "campos fiscales
- * omitidos", hallazgo 8): antes ningún `*.ride.ts` los leía, aunque
- * `Destinatario` los modela — el número de autorización del documento
- * sustento (parte del layout RIDE del SRI para guía de remisión) y el
- * establecimiento que recibe el traslado se perdían en silencio.
+ * Una etiqueta cuyo valor no viene NO se emite (la maqueta las imprime en
+ * blanco, como plantilla; el RIDE generado no es una plantilla, y una etiqueta
+ * sin valor parece un dato faltante del documento en vez de uno ausente en la
+ * fuente — criterio de la auditoría "campos fiscales omitidos"). Ningún campo
+ * de `Destinatario` se queda fuera: `numAutDocSustento` y `codEstabDestino`
+ * (hallazgo 8) tienen aquí su fila propia.
  */
-function lineasTraslado(destinatario: Destinatario): string[] {
-  const lineas = [`Motivo del Traslado: ${destinatario.motivoTraslado}`];
-  if (destinatario.codDocSustento) {
-    // Evita un "- " colgante cuando `numDocSustento` no viene (el XSD lo
-    // declara opcional junto a `codDocSustento`).
-    const numero = destinatario.numDocSustento ? ` - ${destinatario.numDocSustento}` : '';
-    lineas.push(`Documento Sustento: ${destinatario.codDocSustento}${numero}`);
+function filasDestinatario(destinatario: Destinatario): FilaBanda[] {
+  const filas: FilaBanda[] = [];
+
+  if (destinatario.codDocSustento || destinatario.numDocSustento) {
+    const tipo = destinatario.codDocSustento
+      ? nombreDocumentoPorCodigo(destinatario.codDocSustento).toUpperCase()
+      : '';
+    const comprobante = [tipo, destinatario.numDocSustento ?? ''].filter((parte) => parte !== '').join('   ');
+    // La fecha de emisión del documento sustento comparte fila con el
+    // comprobante, como en la maqueta. Si no viene, la fila se queda con dos
+    // columnas y el comprobante ocupa todo el ancho.
+    filas.push(
+      destinatario.fechaEmisionDocSustento
+        ? {
+            izquierda: { etiqueta: 'Comprobante de Venta:', valor: comprobante },
+            derecha: { etiqueta: 'Fecha de Emisión:', valor: destinatario.fechaEmisionDocSustento },
+            fracciones: FRACCIONES_DOS_PARES,
+          }
+        : { izquierda: { etiqueta: 'Comprobante de Venta:', valor: comprobante } },
+    );
   }
-  if (destinatario.numAutDocSustento) {
-    lineas.push(`Número de Autorización del Documento Sustento: ${destinatario.numAutDocSustento}`);
+
+  const pares: Array<[string, string | undefined]> = [
+    ['Número de Autorización:', destinatario.numAutDocSustento],
+    ['Motivo Traslado:', destinatario.motivoTraslado],
+    ['Destino(Punto de llegada)', destinatario.dirDestinatario],
+    ['Identificación (Destinatario)', destinatario.identificacionDestinatario],
+    ['Razón Social/Nombres Apellidos', destinatario.razonSocialDestinatario],
+    ['Documento Aduanero', destinatario.docAduaneroUnico],
+    ['Código Establecimiento Destino', destinatario.codEstabDestino],
+    ['Ruta:', destinatario.ruta],
+  ];
+  for (const [etiqueta, valor] of pares) {
+    if (valor !== undefined && valor.trim() !== '') {
+      filas.push({ izquierda: { etiqueta, valor } });
+    }
   }
-  if (destinatario.docAduaneroUnico) {
-    lineas.push(`Documento Aduanero Único: ${destinatario.docAduaneroUnico}`);
-  }
-  if (destinatario.codEstabDestino) {
-    lineas.push(`Código de Establecimiento Destino: ${destinatario.codEstabDestino}`);
-  }
-  if (destinatario.ruta) {
-    lineas.push(`Ruta: ${destinatario.ruta}`);
-  }
-  return lineas;
+  return filas;
 }
 
 /**
- * RIDE de Guía de Remisión (codDoc `06`). El único de los 6 comprobantes sin
- * montos: no hay `detalles`, `totalConImpuestos` ni `pagos` a nivel
- * documento — el "detalle" vive por `Destinatario`
- * (`DestinatarioDetalle[]`, sin precio unitario ni impuestos), así que
- * `drawComprador` se llama una vez por destinatario
- * (`etiquetaSujeto: 'Destinatario'`, hallazgo de reusabilidad de la
- * revisión de Task 1), seguido de sus datos de traslado y su propia tabla
- * de detalle. `GuiaRemision` tampoco modela `fechaEmision`: se usa
- * `destinatario.fechaEmisionDocSustento` si viene, o si no
- * `documento.fechaIniTransporte` (obligatorio) como la fecha más cercana
- * disponible para ese bloque.
+ * RIDE de Guía de Remisión (codDoc `06`), conforme a la maqueta de la
+ * **página 60 del Anexo 2**: cabecera de dos columnas, banda del
+ * transportista (`Identificación (Transportista)`, `Razón Social / Nombres y
+ * Apellidos:`, `Placa:`, `Punto de Partida:`, `Fecha inicio Transporte` /
+ * `Fecha fin Transporte`), y por cada destinatario su propia banda + su tabla
+ * `Cantidad | Descripcion | Código Principal | Código Auxiliar`.
+ *
+ * **Sin bloque de totales**: es el único de los 6 comprobantes sin montos (no
+ * hay `detalles`, `totalConImpuestos` ni `pagos` a nivel documento), así que
+ * el pie se dibuja solo con `infoAdicional`.
  */
 export async function generarRideGuiaRemision(opciones: RideOptions<GuiaRemision>): Promise<Uint8Array> {
   const { documento, claveAcceso, autorizacion, logo } = opciones;
-  const incluirQr = opciones.opciones?.incluirQr ?? true;
+  const codigoBarras = opciones.opciones?.codigoBarras ?? true;
+  const incluirQr = opciones.opciones?.incluirQr ?? false;
   const tamano = opciones.opciones?.tamano ?? 'A4';
 
   const { doc, finalizar } = await crearDocumentoRide(tamano);
@@ -120,10 +146,6 @@ export async function generarRideGuiaRemision(opciones: RideOptions<GuiaRemision
   const margenX = doc.page.margins.left;
   const anchoUtil = doc.page.width - doc.page.margins.left - doc.page.margins.right;
   let y = doc.page.margins.top;
-
-  // Cabecera: emisor (izquierda) + comprobante con QR (derecha), misma fila.
-  const anchoEmisor = Math.floor(anchoUtil * PROPORCION_EMISOR);
-  const anchoComprobante = anchoUtil - anchoEmisor;
 
   const emisor: EmisorRide = {
     logo,
@@ -146,58 +168,50 @@ export async function generarRideGuiaRemision(opciones: RideOptions<GuiaRemision
     claveAcceso,
     autorizacion,
   };
-  y =
-    drawBloquesEnFila(
-      doc,
-      y,
-      medirEmisor(doc, emisor, anchoEmisor),
-      medirComprobante(doc, comprobante, anchoComprobante, qr !== undefined),
-      (yFila) => drawEmisor(doc, emisor, { x: margenX, y: yFila, width: anchoEmisor }),
-      (yFila) =>
-        drawComprobante(doc, comprobante, { x: margenX + anchoEmisor, y: yFila, width: anchoComprobante }, qr),
-      ESPACIADO_BLOQUE,
-    ) + ESPACIADO_BLOQUE;
+  const cabecera = { emisor, comprobante, qr, codigoBarras };
+  y = asegurarEspacio(doc, y, medirCabecera(doc, cabecera, anchoUtil));
+  y = drawCabecera(doc, cabecera, { x: margenX, y, width: anchoUtil }) + ESPACIADO_BLOQUE;
 
-  // Transportista + placa + fechas de transporte + dirección de partida.
-  const lineasTransportista = [
-    `Razón Social: ${documento.razonSocialTransportista}`,
-    `Identificación (RUC): ${documento.rucTransportista}`,
-    `Placa: ${documento.placa}`,
-    `Fecha Inicio Transporte: ${documento.fechaIniTransporte}`,
-    `Fecha Fin Transporte: ${documento.fechaFinTransporte}`,
-    `Dirección de Partida: ${documento.dirPartida}`,
+  // Banda del transportista. `tipoIdentificacionTransportista` se imprime
+  // decodificado junto al número (`(RUC)`), igual que en la banda del
+  // comprador: es un campo real del documento.
+  const filasTransportista: FilaBanda[] = [
+    {
+      izquierda: {
+        etiqueta: 'Identificación (Transportista)',
+        valor: identificacionConTipo(documento.rucTransportista, documento.tipoIdentificacionTransportista),
+      },
+    },
+    { izquierda: { etiqueta: 'Razón Social / Nombres y Apellidos:', valor: documento.razonSocialTransportista } },
+    { izquierda: { etiqueta: 'Placa:', valor: documento.placa } },
+    { izquierda: { etiqueta: 'Punto de Partida:', valor: documento.dirPartida } },
+    {
+      izquierda: { etiqueta: 'Fecha inicio Transporte', valor: documento.fechaIniTransporte },
+      derecha: { etiqueta: 'Fecha fin Transporte', valor: documento.fechaFinTransporte },
+      fracciones: FRACCIONES_DOS_PARES,
+    },
   ];
-  y = asegurarEspacio(doc, y, medirBloqueTexto(doc, TITULO_TRANSPORTISTA, lineasTransportista, anchoUtil));
-  y =
-    drawBloqueTexto(doc, TITULO_TRANSPORTISTA, lineasTransportista, { x: margenX, y, width: anchoUtil }) +
-    ESPACIADO_BLOQUE;
+  y = asegurarEspacio(doc, y, medirBandaSujeto(doc, filasTransportista, anchoUtil));
+  y = drawBandaSujeto(doc, filasTransportista, { x: margenX, y, width: anchoUtil }) + ESPACIADO_BLOQUE;
 
-  // Un bloque "destinatario" + sus datos de traslado + su tabla de detalle, por cada `Destinatario`.
+  // Una banda por destinatario, seguida de su tabla de detalle.
   const columnasDetalle = construirColumnas(anchoUtil, DESTINATARIO_DETALLE_COLUMN_SPECS);
 
   for (const destinatario of documento.destinatarios) {
-    const compradorDestinatario: CompradorRide = {
-      etiquetaSujeto: 'Destinatario',
-      razonSocial: destinatario.razonSocialDestinatario,
-      identificacion: destinatario.identificacionDestinatario,
-      fechaEmision: destinatario.fechaEmisionDocSustento ?? documento.fechaIniTransporte,
-      direccion: destinatario.dirDestinatario,
-    };
-    y = asegurarEspacio(doc, y, medirComprador(doc, compradorDestinatario, anchoUtil));
-    y = drawComprador(doc, compradorDestinatario, { x: margenX, y, width: anchoUtil }) + ESPACIADO_BLOQUE;
-
-    const lineas = lineasTraslado(destinatario);
-    y = asegurarEspacio(doc, y, medirBloqueTexto(doc, TITULO_TRASLADO, lineas, anchoUtil));
-    y = drawBloqueTexto(doc, TITULO_TRASLADO, lineas, { x: margenX, y, width: anchoUtil }) + ESPACIADO_BLOQUE;
+    const filas = filasDestinatario(destinatario);
+    y = asegurarEspacio(doc, y, medirBandaSujeto(doc, filas, anchoUtil));
+    y = drawBandaSujeto(doc, filas, { x: margenX, y, width: anchoUtil }) + ESPACIADO_BLOQUE;
 
     // `drawTablaGenerica` reserva su propio espacio: es dueña de su paginación fila a fila.
     const filasDetalle = destinatario.detalles.map(celdasDestinatarioDetalle);
     y = drawTablaGenerica(doc, columnasDetalle, filasDetalle, { x: margenX, y, width: anchoUtil }) + ESPACIADO_BLOQUE;
   }
 
-  // Información adicional.
-  y = asegurarEspacio(doc, y, medirInfoAdicional(doc, documento.infoAdicional, anchoUtil));
-  drawInfoAdicional(doc, documento.infoAdicional, { x: margenX, y, width: anchoUtil });
+  // Pie: solo `Información Adicional`. La guía de remisión no lleva bloque de
+  // totales ni tabla de formas de pago.
+  const pie = { infoAdicional: documento.infoAdicional };
+  y = asegurarEspacio(doc, y, medirPie(doc, pie, anchoUtil));
+  drawPie(doc, pie, { x: margenX, y, width: anchoUtil });
 
   return finalizar();
 }

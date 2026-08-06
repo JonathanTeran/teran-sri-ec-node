@@ -19,7 +19,7 @@ Este repositorio es un **monorepo npm workspaces** con dos paquetes:
 - ✅ **Certificados `.p12`/`.pfx` sin dependencias nativas**: `node-forge` (JS puro) carga certificados modernos y **legacy** (cifrado RC2/3DES pre-2024) de forma nativa — a diferencia del paquete PHP, **no** necesita un fallback a OpenSSL 1.1 (ver [Troubleshooting](#-troubleshooting)).
 - ✅ **RSA y ECDSA**, algoritmo de digest configurable (`sha1` por defecto — lo que el SRI valida hoy — o `sha256`).
 - ✅ **Los 6 comprobantes electrónicos**: Factura, Liquidación de Compra, Notas de Crédito/Débito, Guía de Remisión y Retención, todos serializables y emitibles con la misma API.
-- ✅ **RIDE (PDF + QR)** para los 6 comprobantes vía el subpath opcional `sri-ec/ride` — `pdfkit`/`qrcode` no se instalan ni se cargan si no se usa (ver [RIDE](#-ride-pdf--qr)).
+- ✅ **RIDE conforme al Anexo 2 de la Ficha Técnica del SRI**, con código de barras Code 128 por defecto (QR opcional), para los 6 comprobantes vía el subpath opcional `sri-ec/ride` — `pdfkit`/`qrcode` no se instalan ni se cargan si no se usa (ver [RIDE](#-ride-pdf--qr)).
 - ✅ **Validación estructural + de negocio**: schemas [zod](https://zod.dev/) (forma, patrones, longitudes) más un `BusinessValidator` que verifica coherencia aritmética (totales, impuestos agregados, retenciones) — **no valida contra XSD** (ver [Troubleshooting](#-troubleshooting)).
 - ✅ **Cliente SOAP nativo sobre `fetch`**: sin WSDL ni `SoapClient`, un POST directo a los web services offline del SRI.
 - ✅ **Envío masivo (`BatchEmitter`)** con reintentos y backoff exponencial configurables.
@@ -374,9 +374,11 @@ Como consecuencia, `SriModule.forRoot()` carga el certificado **al evaluar la de
 
 ## 🧾 RIDE (PDF + QR)
 
-El RIDE (Representación Impresa del Documento Electrónico) es el PDF legible — con el mismo contenido tributario del XML más un código QR — que se entrega junto al comprobante. Vive en un **subpath aparte**, `sri-ec/ride`: el core de `sri-ec` no lo importa nunca, así que quien solo emite/firma comprobantes no paga el costo de sus dependencias.
+El RIDE (Representación Impresa del Documento Electrónico) es el PDF legible — con el mismo contenido tributario del XML — que se entrega junto al comprobante. Desde 0.3.0 reproduce la maqueta oficial del **Anexo 2 de la Ficha Técnica del SRI** (ver detalle de layout más abajo). Vive en un **subpath aparte**, `sri-ec/ride`: el core de `sri-ec` no lo importa nunca, así que quien solo emite/firma comprobantes no paga el costo de sus dependencias.
 
-`pdfkit` (dibujo del PDF) y `qrcode` (el código QR) son **dependencias opcionales** (`peerDependencies` + `peerDependenciesMeta` opcional — deliberadamente **no** `optionalDependencies`, que npm sí instala por defecto) — instálalas solo si vas a generar el RIDE:
+> **Cambio de comportamiento en 0.3.0**: hasta la 0.2.0 el RIDE dibujaba un código QR y `incluirQr` era `true` por defecto. Desde 0.3.0 el predeterminado es el **código de barras Code 128** (`codigoBarras: true`, conforme al Anexo 2) y `incluirQr` pasó a `false`. Quien actualice desde 0.2.0 y quiera conservar el QR debe pasar `opciones: { incluirQr: true }` explícitamente; también puede combinarlo con `codigoBarras: false` para no dibujar ambos.
+
+`pdfkit` (dibujo del PDF, incluido el código de barras) y `qrcode` (el QR, ahora opt-in) son **dependencias opcionales** (`peerDependencies` + `peerDependenciesMeta` opcional — deliberadamente **no** `optionalDependencies`, que npm sí instala por defecto). Con las opciones por defecto solo hace falta `pdfkit`; instala `qrcode` únicamente si vas a usar `incluirQr: true`:
 
 ```bash
 npm install pdfkit qrcode
@@ -403,7 +405,8 @@ const pdf: Uint8Array = await generarRide({
   logo: readFileSync('logo.png'), // opcional, PNG/JPG del emisor
   opciones: {
     tamano: 'A4', // 'A4' | 'LETTER', default 'A4'
-    incluirQr: true, // default true
+    codigoBarras: true, // código de barras Code 128 de la clave de acceso, default true
+    incluirQr: false, // QR (alternativa al código de barras), default false
   },
 });
 
@@ -412,7 +415,9 @@ writeFileSync('factura.pdf', pdf);
 
 `generarRide()` despacha por `documento.tipo` y cubre los **6 comprobantes** (Factura, Liquidación de Compra, Notas de Crédito/Débito, Guía de Remisión, Retención) con la misma llamada. También hay un atajo por tipo si el discriminado automático no hace falta: `generarRideFactura`, `generarRideLiquidacionCompra`, `generarRideNotaCredito`, `generarRideNotaDebito`, `generarRideGuiaRemision`, `generarRideRetencion` — todos exportados desde `sri-ec/ride`.
 
-El QR codifica la **clave de acceso** (los mismos 49 dígitos que van en el XML firmado): es lo único que el portal de verificación del SRI necesita para consultar el comprobante.
+El layout sigue las maquetas del **Anexo 2 de la Ficha Técnica** del SRI: cabecera de dos columnas (logo y datos del emisor a la izquierda; R.U.C., nombre del comprobante, autorización y clave de acceso a la derecha), banda del sujeto a todo el ancho, tabla de detalles y pie de dos columnas con la información adicional y las formas de pago a la izquierda y los totales a la derecha.
+
+Bajo el rótulo `CLAVE DE ACCESO` se imprime un **código de barras Code 128** con los 49 dígitos de la clave debajo, que es lo que muestra la maqueta oficial (la nota al pie de la página 56 aclara que el código de barras es opcional: `codigoBarras: false` lo omite sin quitar la clave impresa). El código de barras se dibuja con vectores y solo necesita `pdfkit`. `incluirQr: true` añade el QR de v0.2.0 como alternativa —requiere la dependencia opcional `qrcode`— y codifica la misma clave de acceso: es lo único que el portal de verificación del SRI necesita para consultar el comprobante.
 
 `autorizacion` es opcional: el SRI autoriza de forma asíncrona, así que si el RIDE se imprime antes de recibir la respuesta (o la autorización nunca llegó), el PDF se genera igual — con la cabecera marcada como **"NO AUTORIZADO"** en vez de mostrar número y fecha de autorización.
 

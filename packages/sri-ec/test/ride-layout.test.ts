@@ -5,6 +5,7 @@ import type { Comprobante, Factura, NotaCredito, Pago } from '../src/documents/i
 import { generarRide } from '../src/ride/index.js';
 import { crearDocumentoRide } from '../src/ride/pdf-doc.js';
 import { drawTotales } from '../src/ride/blocks.js';
+import { patronCode128 } from '../src/ride/code128.js';
 import { generarClaveAcceso } from '../src/utils/clave-acceso.js';
 import {
   facturaFixture,
@@ -220,6 +221,23 @@ function tieneBordeAlrededor(pagina: PaginaPdf, x: number, y: number): boolean {
   );
 }
 
+/**
+ * Caja con borde MÁS PEQUEÑA que envuelve el primer item cuyo texto contenga
+ * `fragmento`. Las cajas del RIDE están anidadas (una fila de tabla dentro de
+ * la tabla, la tabla dentro de nada), así que "la más pequeña" es la que
+ * delimita el bloque de ese texto.
+ */
+function cajaDe(paginas: PaginaPdf[], fragmento: string): RectPdf {
+  const encontrado = localizar(paginas, fragmento);
+  expect(encontrado, `no se encontró "${fragmento}" en el PDF`).toBeDefined();
+  const { pagina, item } = encontrado!;
+  const contenedoras = pagina.rects.filter(
+    (r) => r.x <= item.x && item.x <= r.x + r.ancho && r.y <= item.y && item.y <= r.y + r.alto,
+  );
+  expect(contenedoras.length, `"${fragmento}" no está dentro de ninguna caja con borde`).toBeGreaterThan(0);
+  return contenedoras.reduce((menor, r) => (r.ancho * r.alto < menor.ancho * menor.alto ? r : menor));
+}
+
 /** Busca el primer item cuyo texto contenga `fragmento`, junto con la página en la que está. */
 function localizar(paginas: PaginaPdf[], fragmento: string): { pagina: PaginaPdf; item: ItemTexto } | undefined {
   for (const pagina of paginas) {
@@ -275,14 +293,32 @@ const INFO_ADICIONAL_6 = {
   OrdenCompra: 'OC-2026-0001',
 };
 
-/** Etiquetas del bloque de totales que SIEMPRE deben ir con su importe al lado. */
+/**
+ * Etiquetas LITERALES del Anexo 2 (maqueta de la factura, página 56) que
+ * SIEMPRE deben ir con su importe al lado. Son las que imprime `drawTotales`:
+ * si alguna se renombrara, este barrido dejaría de vigilarla (el helper solo
+ * comprueba los items cuyo texto está en esta lista), así que la lista se
+ * mantiene sincronizada con `ETIQUETAS_TOTALES_FACTURA` de `blocks.ts`.
+ */
 const ETIQUETAS_TOTALES = [
   'VALOR TOTAL',
-  'Subtotal sin impuestos',
-  'Total descuento',
-  'IVA',
-  'Propina',
+  'VALOR TOTAL SIN SUBSIDIO',
+  'SUBTOTAL SIN IMPUESTOS',
+  'SUBTOTAL IVA 0%',
+  'SUBTOTAL NO OBJETO IVA',
+  'SUBTOTAL EXENTO IVA',
+  'DESCUENTO',
+  'IVA 15%',
+  'PROPINA',
   'ICE',
+  // Las cuatro filas que la liquidación de compra (maqueta de la página 61)
+  // redacta distinto. Sin ellas, el barrido de liquidación dejaría de vigilar
+  // media tabla de totales: el helper solo comprueba los items cuyo texto está
+  // en esta lista.
+  'SUBTOTAL 0%',
+  'SUBTOTAL NO OBJETO DE IVA',
+  'SUBTOTAL EXENTO DE IVA',
+  'TOTAL DESCUENTO',
 ];
 
 describe('ride: paginación y layout', () => {
@@ -308,10 +344,13 @@ describe('ride: paginación y layout', () => {
 
     // Y los 6 campos de información adicional salen todos, bajo su título.
     const todo = paginas.map((p) => p.texto).join('\n');
+    // Clave y valor van en columnas separadas de la caja (maqueta del Anexo 2),
+    // así que el texto extraído ya no los trae unidos por dos puntos.
     for (const [clave, valor] of Object.entries(INFO_ADICIONAL_6)) {
-      expect(todo).toContain(`${clave}: ${valor}`);
+      expect(todo).toContain(clave);
+      expect(todo).toContain(valor);
     }
-    expect(todo).toContain('INFORMACIÓN ADICIONAL');
+    expect(todo).toContain('Información Adicional');
   });
 
   it('barrido de 20 a 45 filas (factura): rectángulos sanos y etiquetas con su importe en todas las páginas', async () => {
@@ -338,6 +377,50 @@ describe('ride: paginación y layout', () => {
       expect(todo, `con ${filas} filas`).toContain(`Servicio devuelto ${filas}`);
     }
   }, 60_000);
+
+  /**
+   * En la maqueta lo que llena la columna izquierda de la cabecera es la imagen
+   * del contribuyente. Cuando el consumidor NO pasa logo, igualar la altura de
+   * las dos cajas dibujaba un rectángulo enorme con dos o tres líneas de texto
+   * y un palmo de blanco debajo (el alto lo marca la caja del comprobante, que
+   * lleva autorización + código de barras + 49 dígitos). Sin logo, la caja del
+   * emisor se ajusta a su contenido; con logo, las dos siguen cerrando a la
+   * misma altura, como en la página 56.
+   */
+  it('sin logo, la caja del emisor se ajusta a su contenido; con logo, las dos cajas de la cabecera cierran a la misma altura', async () => {
+    const sinLogo = await analizarPdf(await generarRide({ documento: facturaFixture, claveAcceso }));
+    const emisorSinLogo = cajaDe(sinLogo, 'COMERCIAL AMEPHIA S.A.');
+    const comprobanteSinLogo = cajaDe(sinLogo, 'R.U.C.:');
+
+    // La caja del emisor termina MUY por encima de la del comprobante: la
+    // diferencia es exactamente el hueco que antes quedaba en blanco (95.6 pt
+    // con este fixture, que solo trae 4 líneas de emisor).
+    const abajoEmisor = emisorSinLogo.y + emisorSinLogo.alto;
+    const abajoComprobante = comprobanteSinLogo.y + comprobanteSinLogo.alto;
+    expect(abajoComprobante - abajoEmisor).toBeGreaterThan(80);
+    // Y se ajusta al contenido: la última línea del bloque queda a menos de un
+    // padding de caja + un par de puntos del borde inferior.
+    const ultimaLinea = localizar(sinLogo, 'OBLIGADO A LLEVAR CONTABILIDAD')!;
+    expect(abajoEmisor - ultimaLinea.item.y).toBeLessThan(24);
+
+    // PNG de 4×4 gris, RGB de 8 bits: el logo más pequeño que el decodificador
+    // de pdfkit (`png-js`) acepta — un 1×1 en escala de grises lo rechaza con
+    // "Incomplete or corrupt PNG file". Basta para que `drawEmisor` reserve la
+    // banda del logo y `drawCabecera` iguale las dos alturas.
+    const logo = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAQAAAAECAIAAAAmkwkpAAAADklEQVR4nGNwQAIMxHEAOEMMAfoZu1cAAAAASUVORK5CYII=',
+      'base64',
+    );
+    const conLogo = await analizarPdf(await generarRide({ documento: facturaFixture, claveAcceso, logo }));
+    const emisorConLogo = cajaDe(conLogo, 'COMERCIAL AMEPHIA S.A.');
+    const comprobanteConLogo = cajaDe(conLogo, 'R.U.C.:');
+    expect(
+      Math.abs(emisorConLogo.y + emisorConLogo.alto - (comprobanteConLogo.y + comprobanteConLogo.alto)),
+    ).toBeLessThan(1);
+
+    esperarRectangulosSanos(sinLogo);
+    esperarRectangulosSanos(conLogo);
+  });
 
   it('una fila de tabla más alta que una página: los importes van con su descripción y el encabezado se repite', async () => {
     const descripcion = Array.from({ length: 120 }, (_, i) => `linea-descripcion-${i + 1}`).join('\n');
@@ -368,7 +451,7 @@ describe('ride: paginación y layout', () => {
     expect(paginasConDescripcion.length).toBeGreaterThan(1);
     for (const pagina of paginasConDescripcion) {
       expect(pagina.texto, `pág ${pagina.numero} sin encabezado de tabla`).toContain('Descripción');
-      expect(pagina.texto, `pág ${pagina.numero} sin encabezado de tabla`).toContain('P. Total');
+      expect(pagina.texto, `pág ${pagina.numero} sin encabezado de tabla`).toContain('Precio Total');
     }
 
     // Nada se pierde: las 120 líneas siguen en el documento.
@@ -384,7 +467,7 @@ describe('ride: paginación y layout', () => {
     }
   });
 
-  it('30 detalles + 22 formas de pago: "FORMAS DE PAGO" y "TOTALES" caen en la misma página, ambos con borde', async () => {
+  it('30 detalles + 22 formas de pago: la tabla de formas de pago y la de totales caen en la misma página, ambas con borde', async () => {
     const paginas = await analizarPdf(
       await generarRide({ documento: facturaCon(30, { pagos: 22 }), claveAcceso }),
     );
@@ -395,16 +478,26 @@ describe('ride: paginación y layout', () => {
     // derecha de esa misma página, sin relación con su fila.
     esperarRectangulosSanos(paginas);
 
-    const formasPago = localizar(paginas, 'FORMAS DE PAGO');
-    const totales = localizar(paginas, 'TOTALES');
+    // Las dos columnas del pie del Anexo 2: arriba a la izquierda la caja de
+    // información adicional, arriba a la derecha la primera fila de totales.
+    const izquierda = localizar(paginas, 'Información Adicional');
+    const derecha = localizar(paginas, 'SUBTOTAL 15%');
+    const formasPago = localizar(paginas, 'Forma de Pago');
+    expect(izquierda).toBeDefined();
+    expect(derecha).toBeDefined();
     expect(formasPago).toBeDefined();
-    expect(totales).toBeDefined();
-    expect(totales!.pagina.numero).toBe(formasPago!.pagina.numero);
-    // Empiezan además en la misma línea: son una fila, no dos bloques sueltos.
-    expect(Math.abs(totales!.item.y - formasPago!.item.y)).toBeLessThan(1);
 
+    // Las dos columnas arrancan en la MISMA página y prácticamente en la misma
+    // línea (el desfase es el distinto padding de una caja y de una fila de
+    // tabla, no un salto de bloque). La tabla de formas de pago cuelga de la
+    // columna izquierda, así que también va en esa página.
+    expect(derecha!.pagina.numero).toBe(izquierda!.pagina.numero);
+    expect(formasPago!.pagina.numero).toBe(izquierda!.pagina.numero);
+    expect(Math.abs(derecha!.item.y - izquierda!.item.y)).toBeLessThan(12);
+
+    expect(tieneBordeAlrededor(izquierda!.pagina, izquierda!.item.x, izquierda!.item.y)).toBe(true);
+    expect(tieneBordeAlrededor(derecha!.pagina, derecha!.item.x, derecha!.item.y)).toBe(true);
     expect(tieneBordeAlrededor(formasPago!.pagina, formasPago!.item.x, formasPago!.item.y)).toBe(true);
-    expect(tieneBordeAlrededor(totales!.pagina, totales!.item.x, totales!.item.y)).toBe(true);
 
     esperarEtiquetasConSuImporte(paginas, ETIQUETAS_TOTALES);
     // Las 22 formas de pago siguen ahí.
@@ -442,15 +535,18 @@ describe('ride: paginación y layout', () => {
     expect(paginas).toHaveLength(1);
     const pagina = paginas[0];
 
-    const yUltimaLineaEtiqueta = Math.max(
-      ...pagina.items.filter((i) => i.texto.includes('LINEAS') || i.texto.includes('ENVUELVE')).map((i) => i.y),
-    );
-    const ySubtotalSinImpuestos = pagina.items.find((i) => i.texto.includes('Subtotal sin impuestos'))!.y;
+    // Última línea de la etiqueta envuelta de la PRIMERA fila (`SUBTOTAL
+    // CODIGO-…`, que ocupa 3 líneas) y primera línea de la fila siguiente.
+    // Se busca por el trozo final de la etiqueta, no por "ENVUELVE": el
+    // rótulo de IVA también deriva del mismo `codigoPorcentaje` y repetiría
+    // esa subcadena varias filas más abajo.
+    const yUltimaLineaEtiqueta = pagina.items.find((i) => i.texto.trim() === 'VARIAS-LINEAS')!.y;
+    const ySiguienteFila = pagina.items.find((i) => i.texto.includes('SUBTOTAL IVA 0%'))!.y;
 
     // La fila siguiente empieza POR DEBAJO de la última línea de la etiqueta
     // envuelta (antes: 770.188 vs 753.692 en coordenadas del PDF — es decir,
     // por encima, pisándola).
-    expect(ySubtotalSinImpuestos).toBeGreaterThan(yUltimaLineaEtiqueta);
+    expect(ySiguienteFila).toBeGreaterThan(yUltimaLineaEtiqueta);
     esperarRectangulosSanos(paginas);
     esperarEtiquetasConSuImporte(paginas, ETIQUETAS_TOTALES);
   });
@@ -473,7 +569,7 @@ describe('ride: paginación y layout', () => {
       expect(todo).toContain(`palabra${n}`);
     }
     // La caja se reabre con el título marcado como continuación.
-    expect(todo).toContain('INFORMACIÓN ADICIONAL (continuación)');
+    expect(todo).toContain('Información Adicional (continuación)');
   });
 
   /**
@@ -539,8 +635,56 @@ describe('ride: paginación y layout', () => {
         esperarEtiquetasConSuImporte(paginas, ETIQUETAS_TOTALES);
         // La información adicional completa sobrevive al salto de página.
         const todo = paginas.map((p) => p.texto).join('\n');
-        expect(todo, `${nombre} con ${filas} filas`).toContain('OrdenCompra: OC-2026-0001');
+        expect(todo, `${nombre} con ${filas} filas`).toContain('OrdenCompra');
+        expect(todo, `${nombre} con ${filas} filas`).toContain('OC-2026-0001');
       }
     }, 60_000);
   }
+});
+
+
+/**
+ * El código de barras Code 128 de la clave de acceso (Anexo 2, página 56) se
+ * dibuja con RECTÁNGULOS de pdfkit, no con una imagen: se verifica contando
+ * las barras que acaban en el PDF y comparándolas con las que el codificador
+ * dice que debe haber. Un fallo aquí significa que el símbolo impreso no es el
+ * que codifica la clave — un código de barras que escanea otra cosa, o
+ * ninguna.
+ */
+describe('ride: código de barras Code 128', () => {
+  /** Barras (elementos oscuros) del símbolo de `claveAcceso`: los de índice par. */
+  const BARRAS_ESPERADAS = Math.ceil(patronCode128(claveAcceso).length / 2);
+
+  /**
+   * Rectángulos que son barras: altos y estrechos, en la mitad derecha de la
+   * cabecera (donde va la caja del comprobante) y en el tercio superior de la
+   * página. El filtro es deliberadamente laxo en x/y —lo que se verifica es el
+   * CONTEO, no la posición al punto— pero excluye los bordes de cajas y filas,
+   * que son anchos.
+   */
+  function contarBarras(pagina: PaginaPdf): number {
+    return pagina.rects.filter(
+      (r) => r.ancho > 0 && r.ancho < 3 && r.alto > 20 && r.x > pagina.ancho / 2 && r.y < pagina.alto / 3,
+    ).length;
+  }
+
+  it('dibuja exactamente las barras del símbolo de la clave de acceso, en la caja del comprobante', async () => {
+    const paginas = await analizarPdf(await generarRide({ documento: facturaFixture, claveAcceso }));
+
+    expect(BARRAS_ESPERADAS).toBeGreaterThan(50);
+    expect(contarBarras(paginas[0])).toBe(BARRAS_ESPERADAS);
+    // Y ninguna barra rompe la geometría (ancho/alto positivos, dentro del papel).
+    esperarRectangulosSanos(paginas);
+  });
+
+  it('opciones.codigoBarras = false no dibuja ninguna barra, pero conserva el rótulo y los 49 dígitos', async () => {
+    const paginas = await analizarPdf(
+      await generarRide({ documento: facturaFixture, claveAcceso, opciones: { codigoBarras: false } }),
+    );
+
+    expect(contarBarras(paginas[0])).toBe(0);
+    expect(paginas[0].texto).toContain('CLAVE DE ACCESO');
+    expect(paginas[0].texto).toContain(claveAcceso);
+    esperarRectangulosSanos(paginas);
+  });
 });

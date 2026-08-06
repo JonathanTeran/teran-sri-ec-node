@@ -6,20 +6,18 @@ import {
   asegurarEspacio,
   construirColumnas,
   drawBloqueTexto,
-  drawBloquesEnFila,
+  drawCabecera,
   drawComprador,
-  drawComprobante,
-  drawEmisor,
-  drawInfoAdicional,
+  drawPie,
   drawTablaGenerica,
   formaPagoLabel,
   formatNumeroComprobante,
   medirBloqueTexto,
+  medirCabecera,
   medirComprador,
-  medirComprobante,
-  medirEmisor,
-  medirInfoAdicional,
+  medirPie,
   nombreDocumento,
+  nombreDocumentoPorCodigo,
 } from './blocks.js';
 import { crearDocumentoRide } from './pdf-doc.js';
 import { generarQr } from './qr.js';
@@ -27,35 +25,31 @@ import type { ComprobanteRide, CompradorRide, EmisorRide, RideOptions } from './
 
 /** Separación vertical entre bloques apilados. */
 const ESPACIADO_BLOQUE = 10;
-/** Proporción del ancho útil que ocupa la columna del emisor en la cabecera (el resto es "comprobante"). */
-const PROPORCION_EMISOR = 0.55;
 
 /**
- * Columnas de la tabla de documentos sustento: una fila de tabla por cada
- * `RetencionRow` dentro de cada `DocSustento`.
+ * Columnas de la tabla de retenciones, con los encabezados LITERALES de la
+ * maqueta de la **página 59** (`Comprobante`, `Número`, `Fecha Emisión`,
+ * `Ejercicio Fiscal`, `Base Imponible para la Retención`, `IMPUESTO`,
+ * `Porcentaje Retención`, `Valor Retenido`) y en ese orden. Una fila por cada
+ * `retenciones[]` de cada `docsSustento[]`.
  *
- * `Comprobante` (0.115, no 0.1) y `Fecha Emisión` (0.125, no 0.11): hallazgo
- * confirmado del reviewer — con las fracciones originales, el ancho útil de
- * ambas columnas en A4 (a `TAMANO_TABLA` en negrita, el encabezado) era
- * menor que el texto del propio encabezado (`"Comprobante"` ≈ 48.6pt vs
- * ≈ 46pt útiles; `"Fecha Emisión"` ≈ 52.9pt vs ≈ 51pt útiles), así que
- * pdfkit partía el encabezado en dos líneas ("Comprobant" / "e"). Se
- * compensa restando de `Impuesto` (0.09), `Código` (0.08) y `%` (0.065) —
- * las tres tienen de sobra frente a su contenido real (`RENTA`/`IVA`/`ISD`,
- * códigos cortos, porcentajes de pocos dígitos).
+ * Los pesos siguen la proporción de la maqueta (`Base Imponible para la
+ * Retención` es la más ancha porque su encabezado ocupa tres palabras largas;
+ * `Comprobante`, `IMPUESTO` y `Porcentaje Retención` van holgadas frente a su
+ * contenido real: `FACTURA`/`IVA`/`RENTA` y porcentajes de pocos dígitos).
+ * Los encabezados se envuelven a dos líneas, igual que en la maqueta, pero
+ * NUNCA a mitad de palabra: cada columna tiene ancho suficiente para su
+ * palabra más larga.
  */
-/** Título del bloque propio del comprobante de retención (período fiscal + total retenido). */
-const TITULO_RETENCION = 'RETENCIÓN';
-
-const DOC_SUSTENTO_COLUMN_SPECS: Array<[string, number, 'left' | 'right']> = [
+const RETENCION_COLUMN_SPECS: Array<[string, number, 'left' | 'center' | 'right']> = [
   ['Comprobante', 0.115, 'left'],
-  ['Número', 0.16, 'left'],
-  ['Fecha Emisión', 0.125, 'left'],
-  ['Impuesto', 0.09, 'left'],
-  ['Código', 0.08, 'left'],
-  ['Base Imponible', 0.14, 'right'],
-  ['%', 0.065, 'right'],
-  ['Valor Retenido', 0.225, 'right'],
+  ['Número', 0.15, 'left'],
+  ['Fecha Emisión', 0.115, 'center'],
+  ['Ejercicio Fiscal', 0.11, 'center'],
+  ['Base Imponible para la Retención', 0.16, 'right'],
+  ['IMPUESTO', 0.12, 'center'],
+  ['Porcentaje Retención', 0.11, 'right'],
+  ['Valor Retenido', 0.12, 'right'],
 ];
 
 /**
@@ -64,14 +58,11 @@ const DOC_SUSTENTO_COLUMN_SPECS: Array<[string, number, 'left' | 'right']> = [
  * comprobante de retención: `1` = RENTA, `2` = IVA, `6` = ISD. NO confundir
  * con `RetencionRow.codigoRetencion` (p.ej. `'303'`), que es el código del
  * concepto de retención de la Tabla 19 (Retenciones Impuesto a la Renta) o
- * la Tabla 21 (Retenciones IVA) del SRI — ese va en su propia columna
- * "Código", no en "Impuesto" (hallazgo confirmado de la revisión: antes
- * `codigoRetencion` se imprimía bajo el encabezado "Impuesto", mezclando
- * ambos catálogos). Local a este renderer (no en `catalogs/`) porque es
- * puramente una etiqueta de presentación del RIDE, igual que
- * `LABEL_FORMA_PAGO` en `blocks.ts` — los códigos en sí no tienen un tipo
- * nominal público hoy (`RetencionRow.codigo` se modela como `string` suelto
- * en `documents/retencion.ts`).
+ * la Tabla 21 (Retenciones IVA) del SRI. Local a este renderer (no en
+ * `catalogs/`) porque es puramente una etiqueta de presentación del RIDE,
+ * igual que `LABEL_FORMA_PAGO` en `blocks.ts` — los códigos en sí no tienen un
+ * tipo nominal público hoy (`RetencionRow.codigo` se modela como `string`
+ * suelto en `documents/retencion.ts`).
  */
 const LABEL_IMPUESTO_RETENCION: Record<string, string> = {
   '1': 'RENTA',
@@ -81,47 +72,43 @@ const LABEL_IMPUESTO_RETENCION: Record<string, string> = {
 
 /**
  * Aplana `docsSustento[].retenciones[]` a una fila de tabla por cada
- * retención, con los datos del `DocSustento` que la contiene (tipo,
- * número, fecha de emisión) repetidos por fila — un `DocSustento` puede
- * traer varias `retenciones` (p.ej. IVA y renta sobre el mismo comprobante
- * sustento). La columna "Impuesto" muestra el tipo de impuesto decodificado
- * (`LABEL_IMPUESTO_RETENCION`, con fallback al código crudo si no está en
- * el mapa); "Código" muestra el código de retención tal cual
- * (`codigoRetencion`) — son dos catálogos SRI distintos, cada uno en su
- * propia columna.
+ * retención, con los datos del `DocSustento` que la contiene (tipo, número,
+ * fecha de emisión) repetidos por fila — un `DocSustento` puede traer varias
+ * `retenciones` (p.ej. IVA y renta sobre el mismo comprobante sustento).
  *
- * Un `docSustento` con `retenciones: []` (nada retenido sobre ese
- * comprobante sustento en particular, pero el documento sí lo referencia)
- * emite una fila placeholder con solo sus 3 columnas identificadoras —
- * auditoría "campos fiscales omitidos", hallazgo 7: antes, sin ninguna
- * `retencion` de donde generar una fila, el `docSustento` entero
- * desaparecía del PDF; su `numDocSustento` no aparecía en ningún lado aunque
- * el documento sí lo trajera.
+ * La columna `IMPUESTO` de la maqueta muestra el tipo de impuesto
+ * (`IVA`/`RENTA`); la maqueta de 2017 no le da columna propia a
+ * `codigoRetencion` (el concepto de la Tabla 19/21), que sin embargo es un
+ * campo real del documento — se imprime entre paréntesis junto al tipo
+ * (`IVA (303)`) en vez de perderse, respetando el juego de 8 columnas
+ * oficiales.
+ *
+ * Un `docSustento` con `retenciones: []` (nada retenido sobre ese comprobante
+ * sustento en particular, pero el documento sí lo referencia) emite una fila
+ * placeholder con solo sus columnas identificadoras — auditoría "campos
+ * fiscales omitidos", hallazgo 7: antes, sin ninguna `retencion` de donde
+ * generar una fila, el `docSustento` entero desaparecía del PDF.
  */
-function filasDocsSustento(docsSustento: DocSustento[]): string[][] {
+function filasRetenciones(docsSustento: DocSustento[], periodoFiscal: string): string[][] {
   const filas: string[][] = [];
   for (const docSustento of docsSustento) {
+    const identificacion = [
+      nombreDocumentoPorCodigo(docSustento.codDocSustento).toUpperCase(),
+      docSustento.numDocSustento,
+      docSustento.fechaEmisionDocSustento,
+      periodoFiscal,
+    ];
+
     if (docSustento.retenciones.length === 0) {
-      filas.push([
-        docSustento.codDocSustento,
-        docSustento.numDocSustento,
-        docSustento.fechaEmisionDocSustento,
-        '',
-        '',
-        '',
-        '',
-        '',
-      ]);
+      filas.push([...identificacion, '', '', '', '']);
       continue;
     }
     for (const retencion of docSustento.retenciones) {
+      const impuesto = LABEL_IMPUESTO_RETENCION[retencion.codigo] ?? retencion.codigo;
       filas.push([
-        docSustento.codDocSustento,
-        docSustento.numDocSustento,
-        docSustento.fechaEmisionDocSustento,
-        LABEL_IMPUESTO_RETENCION[retencion.codigo] ?? retencion.codigo,
-        retencion.codigoRetencion,
+        ...identificacion,
         formatMonto(retencion.baseImponible, 2),
+        `${impuesto} (${retencion.codigoRetencion})`,
         `${retencion.porcentajeRetener}%`,
         formatMonto(retencion.valorRetenido, 2),
       ]);
@@ -145,30 +132,31 @@ function totalRetenido(docsSustento: DocSustento[]): string {
 const TITULO_DOC_SUSTENTO_DETALLE = 'DETALLE DE DOCUMENTOS SUSTENTO';
 
 /**
- * Líneas del bloque "Detalle de Documentos Sustento": por cada `docSustento`,
- * su código de sustento, sus totales y CADA fila de `impuestosDocSustento`/
- * `pagos` — nada se resume ni se descarta.
+ * Líneas del bloque "Detalle de Documentos Sustento": el total retenido, el
+ * tipo de sujeto retenido / parte relacionada del documento y, por cada
+ * `docSustento`, su código de sustento, sus totales y CADA fila de
+ * `impuestosDocSustento`/`pagos` — nada se resume ni se descarta.
  *
- * Auditoría "campos fiscales omitidos", hallazgo 9: `codSustento`,
- * `importeTotal`, `impuestosDocSustento[]` y `pagos[]` no se leían en
- * ningún lado de este archivo. El comentario original en el encabezado del
- * módulo documentaba la omisión de `pagos` como una decisión de alcance
- * ("no está en el listado de bloques obligatorios del plan") — pero deja de
- * imprimir un dato real de un documento fiscal, sea por decisión de alcance
- * o por descuido, y el efecto es el mismo: el lector no puede verificar esos
- * valores contra el comprobante sustento original.
- *
- * Deliberadamente NO se fusiona con {@link filasDocsSustento} (la tabla de
- * retenciones): esa tabla tiene sus fracciones de columna ya afinadas contra
- * un hallazgo de wrapping de una revisión anterior (ver el comentario de
- * `DOC_SUSTENTO_COLUMN_SPECS`) — reabrir ese cálculo para meter columnas
- * nuevas arriesgaba reintroducir ese mismo bug. Este bloque es texto libre
- * vía `drawBloqueTexto`/`medirBloqueTexto`, que ya saben paginar contenido
- * arbitrariamente largo (incluida la marca "(continuación)").
+ * Este bloque NO está en la maqueta de la página 59, que solo dibuja la tabla
+ * de retenciones: se conserva porque `codSustento`, `importeTotal`,
+ * `impuestosDocSustento[]`, `pagos[]`, `tipoSujetoRetenido` y `parteRel` son
+ * campos reales del documento y ninguna columna de las 8 oficiales los
+ * recoge (auditoría "campos fiscales omitidos", hallazgo 9). Va DESPUÉS de la
+ * tabla oficial y antes del pie, así que la mitad superior del RIDE —la que
+ * reproduce la maqueta— queda intacta.
  */
-function lineasDocumentosSustentoDetalle(docsSustento: DocSustento[]): string[] {
-  const lineas: string[] = [];
-  for (const docSustento of docsSustento) {
+function lineasDocumentosSustentoDetalle(documento: Retencion): string[] {
+  const lineas = [
+    `Total Retenido: ${totalRetenido(documento.docsSustento)}`,
+  ];
+  if (documento.tipoSujetoRetenido) {
+    lineas.push(`Tipo de Sujeto Retenido: ${documento.tipoSujetoRetenido}`);
+  }
+  if (documento.parteRel) {
+    lineas.push(`Parte Relacionada: ${documento.parteRel}`);
+  }
+
+  for (const docSustento of documento.docsSustento) {
     lineas.push(
       `Documento Sustento: ${docSustento.codDocSustento} - ${docSustento.numDocSustento}` +
         ` (Código de Sustento: ${docSustento.codSustento})`,
@@ -197,17 +185,20 @@ function lineasDocumentosSustentoDetalle(docsSustento: DocSustento[]): string[] 
 }
 
 /**
- * RIDE de Comprobante de Retención (codDoc `07`). Otro comprobante sin
- * `detalles`/`totalConImpuestos`/`pagos` a nivel documento: el cuerpo es la
- * tabla de `docsSustento`, aplanada a una fila por cada `retenciones[]`, más
- * el bloque "Detalle de Documentos Sustento" (`codSustento`, totales,
- * `impuestosDocSustento[]` y `pagos[]` de cada `docSustento` — ver
- * {@link lineasDocumentosSustentoDetalle}). El "sujeto" de `drawComprador`
- * es el sujeto retenido (`etiquetaSujeto: 'Sujeto Retenido'`).
+ * RIDE de Comprobante de Retención (codDoc `07`), conforme a la maqueta de la
+ * **página 59 del Anexo 2**: cabecera de dos columnas, banda del sujeto
+ * retenido, la tabla de 8 columnas con los encabezados literales
+ * ({@link RETENCION_COLUMN_SPECS}) y la caja `Información Adicional` abajo a
+ * la izquierda.
+ *
+ * **Sin bloque de totales**: la maqueta de la retención no lo lleva (el valor
+ * retenido de cada fila es la única cifra del comprobante), así que el pie se
+ * dibuja solo con `infoAdicional`.
  */
 export async function generarRideRetencion(opciones: RideOptions<Retencion>): Promise<Uint8Array> {
   const { documento, claveAcceso, autorizacion, logo } = opciones;
-  const incluirQr = opciones.opciones?.incluirQr ?? true;
+  const codigoBarras = opciones.opciones?.codigoBarras ?? true;
+  const incluirQr = opciones.opciones?.incluirQr ?? false;
   const tamano = opciones.opciones?.tamano ?? 'A4';
 
   const { doc, finalizar } = await crearDocumentoRide(tamano);
@@ -216,10 +207,6 @@ export async function generarRideRetencion(opciones: RideOptions<Retencion>): Pr
   const margenX = doc.page.margins.left;
   const anchoUtil = doc.page.width - doc.page.margins.left - doc.page.margins.right;
   let y = doc.page.margins.top;
-
-  // Cabecera: emisor (izquierda) + comprobante con QR (derecha), misma fila.
-  const anchoEmisor = Math.floor(anchoUtil * PROPORCION_EMISOR);
-  const anchoComprobante = anchoUtil - anchoEmisor;
 
   const emisor: EmisorRide = {
     logo,
@@ -241,21 +228,13 @@ export async function generarRideRetencion(opciones: RideOptions<Retencion>): Pr
     claveAcceso,
     autorizacion,
   };
-  y =
-    drawBloquesEnFila(
-      doc,
-      y,
-      medirEmisor(doc, emisor, anchoEmisor),
-      medirComprobante(doc, comprobante, anchoComprobante, qr !== undefined),
-      (yFila) => drawEmisor(doc, emisor, { x: margenX, y: yFila, width: anchoEmisor }),
-      (yFila) =>
-        drawComprobante(doc, comprobante, { x: margenX + anchoEmisor, y: yFila, width: anchoComprobante }, qr),
-      ESPACIADO_BLOQUE,
-    ) + ESPACIADO_BLOQUE;
+  const cabecera = { emisor, comprobante, qr, codigoBarras };
+  y = asegurarEspacio(doc, y, medirCabecera(doc, cabecera, anchoUtil));
+  y = drawCabecera(doc, cabecera, { x: margenX, y, width: anchoUtil }) + ESPACIADO_BLOQUE;
 
-  // Sujeto retenido: mismo bloque "comprador", etiqueta cambiada.
+  // Banda del sujeto retenido, sin título: la maqueta arranca directamente en
+  // `Razón Social / Nombres y Apellidos:`.
   const sujetoRetenido: CompradorRide = {
-    etiquetaSujeto: 'Sujeto Retenido',
     razonSocial: documento.razonSocialSujetoRetenido,
     identificacion: documento.identificacionSujetoRetenido,
     tipoIdentificacion: documento.tipoIdentificacionSujetoRetenido,
@@ -264,42 +243,27 @@ export async function generarRideRetencion(opciones: RideOptions<Retencion>): Pr
   y = asegurarEspacio(doc, y, medirComprador(doc, sujetoRetenido, anchoUtil));
   y = drawComprador(doc, sujetoRetenido, { x: margenX, y, width: anchoUtil }) + ESPACIADO_BLOQUE;
 
-  // Período fiscal + total retenido + tipo de sujeto retenido/parte
-  // relacionada (si vienen — auditoría "campos fiscales omitidos": antes
-  // ningún `*.ride.ts` leía `tipoSujetoRetenido`/`parteRel`).
-  const lineasRetencion = [
-    `Período Fiscal: ${documento.periodoFiscal}`,
-    `Total Retenido: ${totalRetenido(documento.docsSustento)}`,
-  ];
-  if (documento.tipoSujetoRetenido) {
-    lineasRetencion.push(`Tipo de Sujeto Retenido: ${documento.tipoSujetoRetenido}`);
-  }
-  if (documento.parteRel) {
-    lineasRetencion.push(`Parte Relacionada: ${documento.parteRel}`);
-  }
-  y = asegurarEspacio(doc, y, medirBloqueTexto(doc, TITULO_RETENCION, lineasRetencion, anchoUtil));
-  y = drawBloqueTexto(doc, TITULO_RETENCION, lineasRetencion, { x: margenX, y, width: anchoUtil }) + ESPACIADO_BLOQUE;
-
-  // Documentos sustento (una fila de tabla por cada `retenciones[]`).
-  // `drawTablaGenerica` reserva su propio espacio: es dueña de su paginación fila a fila.
-  const columnas = construirColumnas(anchoUtil, DOC_SUSTENTO_COLUMN_SPECS);
-  const filas = filasDocsSustento(documento.docsSustento);
+  // Tabla de retenciones (`drawTablaGenerica` reserva su propio espacio: es
+  // dueña de su paginación fila a fila). El `periodoFiscal` del documento es
+  // el `Ejercicio Fiscal` de cada fila — el SRI lo declara a nivel de
+  // comprobante, no por retención.
+  const columnas = construirColumnas(anchoUtil, RETENCION_COLUMN_SPECS);
+  const filas = filasRetenciones(documento.docsSustento, documento.periodoFiscal);
   y = drawTablaGenerica(doc, columnas, filas, { x: margenX, y, width: anchoUtil }) + ESPACIADO_BLOQUE;
 
-  // Detalle de documentos sustento: código de sustento, totales, impuestos y
-  // pagos de CADA `docSustento` (hallazgo 9 — ver
-  // `lineasDocumentosSustentoDetalle`).
-  const lineasDetalleSustento = lineasDocumentosSustentoDetalle(documento.docsSustento);
-  if (lineasDetalleSustento.length > 0) {
-    y = asegurarEspacio(doc, y, medirBloqueTexto(doc, TITULO_DOC_SUSTENTO_DETALLE, lineasDetalleSustento, anchoUtil));
-    y =
-      drawBloqueTexto(doc, TITULO_DOC_SUSTENTO_DETALLE, lineasDetalleSustento, { x: margenX, y, width: anchoUtil }) +
-      ESPACIADO_BLOQUE;
-  }
+  // Campos del documento que las 8 columnas oficiales no recogen (hallazgo 9
+  // — ver `lineasDocumentosSustentoDetalle`).
+  const lineasDetalleSustento = lineasDocumentosSustentoDetalle(documento);
+  y = asegurarEspacio(doc, y, medirBloqueTexto(doc, TITULO_DOC_SUSTENTO_DETALLE, lineasDetalleSustento, anchoUtil));
+  y =
+    drawBloqueTexto(doc, TITULO_DOC_SUSTENTO_DETALLE, lineasDetalleSustento, { x: margenX, y, width: anchoUtil }) +
+    ESPACIADO_BLOQUE;
 
-  // Información adicional.
-  y = asegurarEspacio(doc, y, medirInfoAdicional(doc, documento.infoAdicional, anchoUtil));
-  drawInfoAdicional(doc, documento.infoAdicional, { x: margenX, y, width: anchoUtil });
+  // Pie: solo `Información Adicional` (abajo a la izquierda, como la maqueta).
+  // La retención no lleva bloque de totales ni tabla de formas de pago.
+  const pie = { infoAdicional: documento.infoAdicional };
+  y = asegurarEspacio(doc, y, medirPie(doc, pie, anchoUtil));
+  drawPie(doc, pie, { x: margenX, y, width: anchoUtil });
 
   return finalizar();
 }
