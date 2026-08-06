@@ -2,54 +2,54 @@ import { TipoEmision } from '../catalogs/index.js';
 import type { NotaCredito } from '../documents/index.js';
 import {
   asegurarEspacio,
-  drawBloqueTexto,
-  drawBloquesEnFila,
+  drawBandaSujeto,
+  drawCabecera,
   drawComprador,
-  drawComprobante,
-  drawEmisor,
-  drawInfoAdicional,
+  drawPie,
   drawTablaDetalles,
-  drawTotales,
   formatNumeroComprobante,
-  medirBloqueTexto,
+  medirBandaSujeto,
+  medirCabecera,
   medirComprador,
-  medirComprobante,
-  medirEmisor,
-  medirInfoAdicional,
-  medirTotales,
+  medirPie,
   nombreDocumento,
   nombreDocumentoPorCodigo,
 } from './blocks.js';
+import type { FilaBanda } from './blocks.js';
 import { crearDocumentoRide } from './pdf-doc.js';
 import { generarQr } from './qr.js';
 import type { ComprobanteRide, CompradorRide, EmisorRide, RideOptions, TotalesRide } from './types.js';
 
 /** Separación vertical entre bloques apilados. */
 const ESPACIADO_BLOQUE = 10;
-/** Proporción del ancho útil que ocupa la columna del emisor en la cabecera (el resto es "comprobante"). */
-const PROPORCION_EMISOR = 0.55;
 
 /**
- * Título del bloque propio de la nota de crédito. El nombre legible de
- * `codDocModificado` se resuelve con `nombreDocumentoPorCodigo()` de
- * `blocks.ts` (compartido con `nota-debito.ride.ts` — ver ese archivo para
- * el porqué de no reusar `nombreDocumento()`).
+ * El detalle de la nota de crédito (maqueta de la página 57) es el de la
+ * factura SIN las columnas `Subsidio` / `Precio Sin Subsidio`: `Código`,
+ * `Código Auxiliar`, `Cantidad`, `Descripción`, tres `Detalle Adicional`,
+ * `Precio Unitario`, `Descuento` y `Precio Total`.
  */
-const TITULO_MODIFICA = 'COMPROBANTE QUE MODIFICA';
+const OPCIONES_DETALLE = { subsidio: false };
 
 /**
- * RIDE de Nota de Crédito (codDoc `04`). A diferencia de Factura, no tiene
- * `pagos` (el XSD 1.1.0 de notaCredito no lo contempla) — por eso "Totales"
- * ocupa el ancho completo de la página en vez de compartir fila con
- * "Formas de Pago". El extra propio del tipo es el bloque "Comprobante que
- * Modifica" (`codDocModificado` + `numDocModificado` +
- * `fechaEmisionDocSustento` + `motivo`, vía `drawBloqueTexto`);
- * `valorModificacion` se imprime como el "VALOR TOTAL" del bloque Totales
- * compartido — `NotaCredito` no modela un `importeTotal` separado.
+ * RIDE de Nota de Crédito (codDoc `04`), conforme a la maqueta de la **página
+ * 57 del Anexo 2**: cabecera de dos columnas, banda del comprador, banda
+ * `Comprobante que se modifica` / `Fecha Emisión (Comprobante a modificar)` /
+ * `Razón de Modificación:`, detalle sin columnas de subsidio y pie de dos
+ * columnas.
+ *
+ * `NotaCredito` no tiene `pagos` (el XSD 1.1.0 no lo contempla), así que la
+ * columna izquierda del pie solo lleva la caja de información adicional — es
+ * exactamente lo que dibuja la maqueta. `valorModificacion` se imprime como el
+ * `VALOR TOTAL` de la tabla de totales: `NotaCredito` no modela un
+ * `importeTotal` separado. La tabla no lleva `PROPINA` ni el recuadro de
+ * subsidios (los añade solo la factura), y como el tipo tampoco modela
+ * `totalDescuento`, la fila `DESCUENTO` se omite — igual que en la maqueta.
  */
 export async function generarRideNotaCredito(opciones: RideOptions<NotaCredito>): Promise<Uint8Array> {
   const { documento, claveAcceso, autorizacion, logo } = opciones;
-  const incluirQr = opciones.opciones?.incluirQr ?? true;
+  const codigoBarras = opciones.opciones?.codigoBarras ?? true;
+  const incluirQr = opciones.opciones?.incluirQr ?? false;
   const tamano = opciones.opciones?.tamano ?? 'A4';
 
   const { doc, finalizar } = await crearDocumentoRide(tamano);
@@ -58,10 +58,6 @@ export async function generarRideNotaCredito(opciones: RideOptions<NotaCredito>)
   const margenX = doc.page.margins.left;
   const anchoUtil = doc.page.width - doc.page.margins.left - doc.page.margins.right;
   let y = doc.page.margins.top;
-
-  // Cabecera: emisor (izquierda) + comprobante con QR (derecha), misma fila.
-  const anchoEmisor = Math.floor(anchoUtil * PROPORCION_EMISOR);
-  const anchoComprobante = anchoUtil - anchoEmisor;
 
   const emisor: EmisorRide = {
     logo,
@@ -84,19 +80,12 @@ export async function generarRideNotaCredito(opciones: RideOptions<NotaCredito>)
     claveAcceso,
     autorizacion,
   };
-  y =
-    drawBloquesEnFila(
-      doc,
-      y,
-      medirEmisor(doc, emisor, anchoEmisor),
-      medirComprobante(doc, comprobante, anchoComprobante, qr !== undefined),
-      (yFila) => drawEmisor(doc, emisor, { x: margenX, y: yFila, width: anchoEmisor }),
-      (yFila) =>
-        drawComprobante(doc, comprobante, { x: margenX + anchoEmisor, y: yFila, width: anchoComprobante }, qr),
-      ESPACIADO_BLOQUE,
-    ) + ESPACIADO_BLOQUE;
+  const cabecera = { emisor, comprobante, qr, codigoBarras };
+  y = asegurarEspacio(doc, y, medirCabecera(doc, cabecera, anchoUtil));
+  y = drawCabecera(doc, cabecera, { x: margenX, y, width: anchoUtil }) + ESPACIADO_BLOQUE;
 
-  // Comprador.
+  // Banda del comprador, sin título: la maqueta arranca directamente en
+  // `Razón Social / Nombres y Apellidos:`, igual que la de la factura.
   const comprador: CompradorRide = {
     razonSocial: documento.razonSocialComprador,
     identificacion: documento.identificacionComprador,
@@ -106,34 +95,56 @@ export async function generarRideNotaCredito(opciones: RideOptions<NotaCredito>)
   y = asegurarEspacio(doc, y, medirComprador(doc, comprador, anchoUtil));
   y = drawComprador(doc, comprador, { x: margenX, y, width: anchoUtil }) + ESPACIADO_BLOQUE;
 
-  // Comprobante que modifica + motivo.
-  const nombreModificado = nombreDocumentoPorCodigo(documento.codDocModificado);
-  const lineasModifica = [
-    `Tipo de Comprobante Modificado: ${documento.codDocModificado} - ${nombreModificado}`,
-    `Número de Comprobante Modificado: ${documento.numDocModificado}`,
-    `Fecha de Emisión del Comprobante Sustento: ${documento.fechaEmisionDocSustento}`,
-    `Motivo: ${documento.motivo}`,
-  ];
-  y = asegurarEspacio(doc, y, medirBloqueTexto(doc, TITULO_MODIFICA, lineasModifica, anchoUtil));
-  y = drawBloqueTexto(doc, TITULO_MODIFICA, lineasModifica, { x: margenX, y, width: anchoUtil }) + ESPACIADO_BLOQUE;
+  // Banda del comprobante que se modifica, con las etiquetas literales de la
+  // maqueta. El tipo del documento modificado va decodificado
+  // (`nombreDocumentoPorCodigo`, que cae al código crudo si no lo reconoce) y
+  // el número en su propia columna, como en la página 57.
+  y = asegurarEspacio(doc, y, medirBandaSujeto(doc, filasModifica(documento), anchoUtil));
+  y = drawBandaSujeto(doc, filasModifica(documento), { x: margenX, y, width: anchoUtil }) + ESPACIADO_BLOQUE;
 
   // Detalle (`drawTablaDetalles` reserva su propio espacio: es dueña de su paginación fila a fila).
-  y = drawTablaDetalles(doc, documento.detalles, { x: margenX, y, width: anchoUtil }) + ESPACIADO_BLOQUE;
+  y =
+    drawTablaDetalles(doc, documento.detalles, { x: margenX, y, width: anchoUtil }, OPCIONES_DETALLE) +
+    ESPACIADO_BLOQUE;
 
-  // Totales (ancho completo: NotaCredito no tiene `pagos`, así que no comparte
-  // fila con "Formas de Pago"). `valorModificacion` hace de `importeTotal`.
+  // Pie de dos columnas: información adicional (izquierda), totales (derecha).
   const totales: TotalesRide = {
     impuestos: documento.totalConImpuestos,
     totalSinImpuestos: documento.totalSinImpuestos,
     importeTotal: documento.valorModificacion,
     moneda: documento.moneda,
   };
-  y = asegurarEspacio(doc, y, medirTotales(doc, totales, anchoUtil));
-  y = drawTotales(doc, totales, { x: margenX, y, width: anchoUtil }) + ESPACIADO_BLOQUE;
 
-  // Información adicional.
-  y = asegurarEspacio(doc, y, medirInfoAdicional(doc, documento.infoAdicional, anchoUtil));
-  drawInfoAdicional(doc, documento.infoAdicional, { x: margenX, y, width: anchoUtil });
+  const pie = { infoAdicional: documento.infoAdicional, totales };
+  y = asegurarEspacio(doc, y, medirPie(doc, pie, anchoUtil));
+  drawPie(doc, pie, { x: margenX, y, width: anchoUtil });
 
   return finalizar();
+}
+
+/**
+ * Filas de la banda "comprobante que se modifica" (maqueta de la página 57).
+ *
+ * `codDocModificado` se imprime decodificado y en mayúsculas (`FACTURA`), tal
+ * como la maqueta: `nombreDocumentoPorCodigo` devuelve el propio código si no
+ * lo reconoce, así que un código fuera de catálogo se sigue viendo en el PDF
+ * en vez de desaparecer.
+ */
+function filasModifica(documento: NotaCredito): FilaBanda[] {
+  return [
+    {
+      izquierda: {
+        etiqueta: 'Comprobante que se modifica',
+        valor: nombreDocumentoPorCodigo(documento.codDocModificado).toUpperCase(),
+      },
+      derecha: { etiqueta: '', valor: documento.numDocModificado },
+    },
+    {
+      izquierda: {
+        etiqueta: 'Fecha Emisión (Comprobante a modificar)',
+        valor: documento.fechaEmisionDocSustento,
+      },
+    },
+    { izquierda: { etiqueta: 'Razón de Modificación:', valor: documento.motivo } },
+  ];
 }

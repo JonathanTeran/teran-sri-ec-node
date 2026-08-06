@@ -13,10 +13,19 @@ const [, , coreDistPath, rideDistPath] = process.argv;
 const core = await import(pathToFileURL(coreDistPath).href);
 const ride = await import(pathToFileURL(rideDistPath).href);
 
+// Ver la nota del `.cjs`: además de razón social y dirección matriz, la
+// cabecera del Anexo 2 imprime RUC, serie, secuencial, ambiente y tipo de
+// emisión en columnas propias, y se mide entera antes de dibujar el logo.
 const documentoMinimo = {
   tipo: '01',
   infoTributaria: {
+    ambiente: '1',
+    tipoEmision: '1',
     razonSocial: 'ACME S.A.',
+    ruc: '1790011001001',
+    estab: '001',
+    ptoEmi: '001',
+    secuencial: '000000001',
     dirMatriz: 'Av. Siempre Viva 123',
   },
 };

@@ -294,6 +294,14 @@ const ETIQUETAS_TOTALES = [
   'IVA 15%',
   'PROPINA',
   'ICE',
+  // Las cuatro filas que la liquidación de compra (maqueta de la página 61)
+  // redacta distinto. Sin ellas, el barrido de liquidación dejaría de vigilar
+  // media tabla de totales: el helper solo comprueba los items cuyo texto está
+  // en esta lista.
+  'SUBTOTAL 0%',
+  'SUBTOTAL NO OBJETO DE IVA',
+  'SUBTOTAL EXENTO DE IVA',
+  'TOTAL DESCUENTO',
 ];
 
 describe('ride: paginación y layout', () => {

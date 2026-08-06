@@ -109,6 +109,18 @@ const LABEL_TIPO_EMISION: Record<TipoEmision, string> = {
   [TipoEmision.Normal]: 'NORMAL',
 };
 
+/**
+ * Etiqueta de `codigo` en `mapa`, con fallback al propio código y, si tampoco
+ * lo hay, a cadena vacía. Los `Record<Enum, string>` de arriba están tipados
+ * como totales, pero el documento que llega en tiempo de ejecución puede traer
+ * un código fuera del enum (o ninguno): sin este fallback la celda quedaba en
+ * `undefined` y `widthOfString` reventaba el render completo.
+ */
+function etiquetaCatalogo<T extends string>(mapa: Record<T, string>, codigo: T | undefined): string {
+  if (codigo === undefined) return '';
+  return mapa[codigo] ?? String(codigo);
+}
+
 /** Nombre legible del comprobante ("FACTURA", "NOTA DE CRÉDITO", ...) a partir del `codDoc`. */
 export function nombreDocumento(tipo: TipoComprobante): string {
   switch (tipo) {
@@ -169,6 +181,31 @@ const LABEL_TIPO_IDENTIFICACION: Record<string, string> = {
   '07': 'Consumidor Final',
   '08': 'Identificación del Exterior',
 };
+
+/**
+ * Etiqueta legible por código del catálogo SRI "Tipos de Identificación", con
+ * fallback al código crudo. Punto de reuso explícito para las bandas que Task
+ * 2 arma a mano y que NO pasan por {@link drawComprador} — el transportista de
+ * la guía de remisión (`tipoIdentificacionTransportista`) y el proveedor de la
+ * liquidación de compra, cuya maqueta (página 61) usa `Nombres y Apellidos:` /
+ * `Identificación:` en filas separadas en vez de los pares que emite
+ * {@link filasComprador}. Sin este export, esos dos renderizadores tendrían
+ * que duplicar {@link LABEL_TIPO_IDENTIFICACION} o descartar el código
+ * (auditoría "campos fiscales omitidos": `tipoIdentificacionTransportista` es
+ * un campo real del documento).
+ */
+export function tipoIdentificacionLabel(codigo: string): string {
+  return LABEL_TIPO_IDENTIFICACION[codigo] ?? codigo;
+}
+
+/**
+ * `identificacion` con su tipo decodificado entre paréntesis, o la
+ * identificación sola si no hay tipo — el mismo formato que
+ * {@link filasComprador} usa en la banda del comprador.
+ */
+export function identificacionConTipo(identificacion: string, tipo?: string): string {
+  return tipo ? `${identificacion} (${tipoIdentificacionLabel(tipo)})` : identificacion;
+}
 
 /**
  * Etiqueta legible por código de forma de pago (catálogo SRI "Formas de
@@ -847,10 +884,26 @@ function lineasComprobante(
   let tamanoNombreDoc = TAMANO_NOMBRE_DOC_MAX;
   let espaciadoNombreDoc = 2.5;
   doc.font(FUENTE_NEGRITA).fontSize(tamanoNombreDoc);
-  while (
-    doc.widthOfString(comprobante.nombreDocumento, { characterSpacing: espaciadoNombreDoc }) > anchoCaja &&
-    tamanoNombreDoc > TAMANO_TABLA
-  ) {
+
+  // La condición se mide con `heightOfString` y NO con `widthOfString`: es lo
+  // que usa el `LineWrapper` de pdfkit al dibujar, así que medir y dibujar no
+  // pueden discrepar. Con `widthOfString` sí discrepaban por unas décimas
+  // —`COMPROBANTE DE RETENCIÓN` medía 246.24 pt contra 246.28 pt de caja, así
+  // que el bucle lo daba por bueno a 12 pt y luego pdfkit lo partía en dos
+  // líneas—: el ancho de una cadena con `characterSpacing` incluye el
+  // espaciado del ÚLTIMO carácter, que al envolver no cuenta.
+  const enUnaLinea = (): boolean =>
+    doc.heightOfString(comprobante.nombreDocumento, {
+      width: anchoCaja,
+      characterSpacing: espaciadoNombreDoc,
+    }) <=
+    // Alto de UNA línea al tamaño actual, medido con la misma función: usar
+    // `currentLineHeight()` no vale, porque `heightOfString` suma además el
+    // `lineGap` del documento y la diferencia bastaba para dar toda cadena por
+    // envuelta (y encoger el nombre hasta el mínimo).
+    doc.heightOfString('X', { width: anchoCaja }) + 0.5;
+
+  while (!enUnaLinea() && tamanoNombreDoc > TAMANO_TABLA) {
     tamanoNombreDoc -= 0.5;
     espaciadoNombreDoc = Math.max(0, espaciadoNombreDoc - 0.35);
     doc.fontSize(tamanoNombreDoc);
@@ -879,8 +932,16 @@ function lineasComprobante(
     lineas.push({ texto: 'COMPROBANTE NO AUTORIZADO', negrita: true, color: COLOR_NO_AUTORIZADO });
   }
 
-  lineas.push(filaEtiquetaValor(anchoCaja, 'AMBIENTE:', LABEL_AMBIENTE[comprobante.ambiente], 0.35));
-  lineas.push(filaEtiquetaValor(anchoCaja, 'EMISIÓN:', LABEL_TIPO_EMISION[comprobante.tipoEmision], 0.35));
+  // Con fallback al código crudo, como el resto de mapas de etiquetas de este
+  // módulo (`LABEL_FORMA_PAGO`, `LABEL_TIPO_IDENTIFICACION`, ...): un código
+  // fuera de catálogo se imprime tal cual en vez de dejar la celda en
+  // `undefined` — que no solo perdía el dato, sino que reventaba el render
+  // entero al medir la celda (`TypeError: Cannot read properties of undefined
+  // (reading 'length')` dentro de `widthOfString`).
+  lineas.push(filaEtiquetaValor(anchoCaja, 'AMBIENTE:', etiquetaCatalogo(LABEL_AMBIENTE, comprobante.ambiente), 0.35));
+  lineas.push(
+    filaEtiquetaValor(anchoCaja, 'EMISIÓN:', etiquetaCatalogo(LABEL_TIPO_EMISION, comprobante.tipoEmision), 0.35),
+  );
   lineas.push({ texto: 'CLAVE DE ACCESO', tamano: TAMANO_TITULO });
 
   // Código de barras Code 128 (lo que imprime la maqueta) y/o QR (alternativa
@@ -1026,6 +1087,21 @@ export interface ParBanda {
 export interface FilaBanda {
   izquierda: ParBanda;
   derecha?: ParBanda;
+  /**
+   * Reparto horizontal propio de ESTA fila (etiqueta izquierda, valor
+   * izquierdo, etiqueta derecha, valor derecho), en fracciones del ancho útil
+   * de la caja. Sin esto se usa {@link FRACCIONES_BANDA}, afinado para la
+   * banda del comprador (`Razón Social / Nombres y Apellidos:` +
+   * `Identificación:`), donde la etiqueta derecha es corta.
+   *
+   * Lo necesita la guía de remisión (maqueta de la página 60): sus filas de
+   * dos pares llevan etiquetas derechas largas (`Fecha fin Transporte`,
+   * `Fecha de Emisión:`) que en la fracción por defecto (0.14) se envolvían a
+   * dos líneas o quedaban pegadas a su valor, mientras que sus valores son
+   * cortos (una fecha). Las fracciones se normalizan, así que no tienen que
+   * sumar exactamente 1.
+   */
+  fracciones?: readonly [number, number, number, number];
 }
 
 /** Reparto horizontal de las 4 columnas de una fila de banda (etiqueta/valor × izquierda/derecha). */
@@ -1064,20 +1140,39 @@ export function medirBandaSujeto(
 /** Convierte las filas de la banda en `LineaCaja` de 4 columnas. */
 function lineasBanda(filas: FilaBanda[], anchoArea: number, titulo?: string): LineaCaja[] {
   const anchoCaja = anchoArea - PADDING_CAJA * 2;
-  const anchos = FRACCIONES_BANDA.map((f) => Math.floor(anchoCaja * f));
-  anchos[3] = anchoCaja - anchos[0] - anchos[1] - anchos[2];
+
+  /** Los 4 anchos de una fila; la última columna absorbe el redondeo. */
+  const anchosDe = (fracciones: readonly number[]): number[] => {
+    const total = fracciones.reduce((s, f) => s + f, 0);
+    const anchos = fracciones.map((f) => Math.floor((anchoCaja * f) / total));
+    anchos[3] = anchoCaja - anchos[0] - anchos[1] - anchos[2];
+    return anchos;
+  };
 
   const lineas: LineaCaja[] = titulo ? [{ texto: titulo, negrita: true, tamano: TAMANO_TITULO }] : [];
   for (const fila of filas) {
-    lineas.push({
-      texto: fila.izquierda.etiqueta,
-      columnas: [
-        { texto: fila.izquierda.etiqueta, ancho: anchos[0], negrita: true },
-        { texto: fila.izquierda.valor, ancho: anchos[1], ajustar: true },
-        { texto: fila.derecha?.etiqueta ?? '', ancho: anchos[2], negrita: true },
-        { texto: fila.derecha?.valor ?? '', ancho: anchos[3], ajustar: true },
-      ],
-    });
+    const anchos = anchosDe(fila.fracciones ?? FRACCIONES_BANDA);
+    // Una fila SIN par derecho reparte el ancho en dos columnas, no en cuatro:
+    // el valor se queda con todo lo que sobra en vez de encogerse a la
+    // fracción de una banda de cuatro. Es lo que piden las maquetas de
+    // liquidación de compra (página 61) y guía de remisión (página 60), donde
+    // casi cada fila es `etiqueta | valor largo` a todo lo ancho (`Punto de
+    // Partida:`, `Destino(Punto de llegada)`, `Dirección:`); con el reparto
+    // fijo de cuatro columnas, esos valores se envolvían en dos y tres líneas
+    // dejando media banda en blanco a la derecha.
+    const columnas: ColumnaLinea[] =
+      fila.derecha === undefined
+        ? [
+            { texto: fila.izquierda.etiqueta, ancho: anchos[0], negrita: true },
+            { texto: fila.izquierda.valor, ancho: anchoCaja - anchos[0], ajustar: true },
+          ]
+        : [
+            { texto: fila.izquierda.etiqueta, ancho: anchos[0], negrita: true },
+            { texto: fila.izquierda.valor, ancho: anchos[1], ajustar: true },
+            { texto: fila.derecha.etiqueta, ancho: anchos[2], negrita: true },
+            { texto: fila.derecha.valor, ancho: anchos[3], ajustar: true },
+          ];
+    lineas.push({ texto: fila.izquierda.etiqueta, columnas });
   }
   return lineas;
 }
