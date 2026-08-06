@@ -221,6 +221,23 @@ function tieneBordeAlrededor(pagina: PaginaPdf, x: number, y: number): boolean {
   );
 }
 
+/**
+ * Caja con borde MÁS PEQUEÑA que envuelve el primer item cuyo texto contenga
+ * `fragmento`. Las cajas del RIDE están anidadas (una fila de tabla dentro de
+ * la tabla, la tabla dentro de nada), así que "la más pequeña" es la que
+ * delimita el bloque de ese texto.
+ */
+function cajaDe(paginas: PaginaPdf[], fragmento: string): RectPdf {
+  const encontrado = localizar(paginas, fragmento);
+  expect(encontrado, `no se encontró "${fragmento}" en el PDF`).toBeDefined();
+  const { pagina, item } = encontrado!;
+  const contenedoras = pagina.rects.filter(
+    (r) => r.x <= item.x && item.x <= r.x + r.ancho && r.y <= item.y && item.y <= r.y + r.alto,
+  );
+  expect(contenedoras.length, `"${fragmento}" no está dentro de ninguna caja con borde`).toBeGreaterThan(0);
+  return contenedoras.reduce((menor, r) => (r.ancho * r.alto < menor.ancho * menor.alto ? r : menor));
+}
+
 /** Busca el primer item cuyo texto contenga `fragmento`, junto con la página en la que está. */
 function localizar(paginas: PaginaPdf[], fragmento: string): { pagina: PaginaPdf; item: ItemTexto } | undefined {
   for (const pagina of paginas) {
@@ -360,6 +377,50 @@ describe('ride: paginación y layout', () => {
       expect(todo, `con ${filas} filas`).toContain(`Servicio devuelto ${filas}`);
     }
   }, 60_000);
+
+  /**
+   * En la maqueta lo que llena la columna izquierda de la cabecera es la imagen
+   * del contribuyente. Cuando el consumidor NO pasa logo, igualar la altura de
+   * las dos cajas dibujaba un rectángulo enorme con dos o tres líneas de texto
+   * y un palmo de blanco debajo (el alto lo marca la caja del comprobante, que
+   * lleva autorización + código de barras + 49 dígitos). Sin logo, la caja del
+   * emisor se ajusta a su contenido; con logo, las dos siguen cerrando a la
+   * misma altura, como en la página 56.
+   */
+  it('sin logo, la caja del emisor se ajusta a su contenido; con logo, las dos cajas de la cabecera cierran a la misma altura', async () => {
+    const sinLogo = await analizarPdf(await generarRide({ documento: facturaFixture, claveAcceso }));
+    const emisorSinLogo = cajaDe(sinLogo, 'COMERCIAL AMEPHIA S.A.');
+    const comprobanteSinLogo = cajaDe(sinLogo, 'R.U.C.:');
+
+    // La caja del emisor termina MUY por encima de la del comprobante: la
+    // diferencia es exactamente el hueco que antes quedaba en blanco (95.6 pt
+    // con este fixture, que solo trae 4 líneas de emisor).
+    const abajoEmisor = emisorSinLogo.y + emisorSinLogo.alto;
+    const abajoComprobante = comprobanteSinLogo.y + comprobanteSinLogo.alto;
+    expect(abajoComprobante - abajoEmisor).toBeGreaterThan(80);
+    // Y se ajusta al contenido: la última línea del bloque queda a menos de un
+    // padding de caja + un par de puntos del borde inferior.
+    const ultimaLinea = localizar(sinLogo, 'OBLIGADO A LLEVAR CONTABILIDAD')!;
+    expect(abajoEmisor - ultimaLinea.item.y).toBeLessThan(24);
+
+    // PNG de 4×4 gris, RGB de 8 bits: el logo más pequeño que el decodificador
+    // de pdfkit (`png-js`) acepta — un 1×1 en escala de grises lo rechaza con
+    // "Incomplete or corrupt PNG file". Basta para que `drawEmisor` reserve la
+    // banda del logo y `drawCabecera` iguale las dos alturas.
+    const logo = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAQAAAAECAIAAAAmkwkpAAAADklEQVR4nGNwQAIMxHEAOEMMAfoZu1cAAAAASUVORK5CYII=',
+      'base64',
+    );
+    const conLogo = await analizarPdf(await generarRide({ documento: facturaFixture, claveAcceso, logo }));
+    const emisorConLogo = cajaDe(conLogo, 'COMERCIAL AMEPHIA S.A.');
+    const comprobanteConLogo = cajaDe(conLogo, 'R.U.C.:');
+    expect(
+      Math.abs(emisorConLogo.y + emisorConLogo.alto - (comprobanteConLogo.y + comprobanteConLogo.alto)),
+    ).toBeLessThan(1);
+
+    esperarRectangulosSanos(sinLogo);
+    esperarRectangulosSanos(conLogo);
+  });
 
   it('una fila de tabla más alta que una página: los importes van con su descripción y el encabezado se repite', async () => {
     const descripcion = Array.from({ length: 120 }, (_, i) => `linea-descripcion-${i + 1}`).join('\n');

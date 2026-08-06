@@ -4,6 +4,7 @@ import {
   asegurarEspacio,
   drawBandaSujeto,
   drawCabecera,
+  ETIQUETAS_DETALLE_COMPLETAS,
   drawPie,
   drawTablaDetalles,
   formatNumeroComprobante,
@@ -22,12 +23,12 @@ import type { ComprobanteRide, EmisorRide, EtiquetasTotales, RideOptions, Totale
 const ESPACIADO_BLOQUE = 10;
 
 /**
- * Columnas `Detalle Adicional` del detalle de la liquidación de compra: UNA
- * (maqueta de la página 61), no las tres de la factura. El resto de columnas
- * —incluidas `Subsidio` y `Precio sin Subsidio`— son las mismas que la
- * factura, de ahí que solo se sobreescriba este número.
+ * Detalle de la maqueta de la página 61: UNA columna `Detalle Adicional` (no
+ * las tres de la factura) y los encabezados escritos enteros (`Código` /
+ * `Código Auxiliar` / `Cantidad`, no las abreviaturas de la factura). Las
+ * columnas `Subsidio` y `Precio Sin Subsidio` sí las lleva, como la factura.
  */
-const OPCIONES_DETALLE = { detallesAdicionales: 1 };
+const OPCIONES_DETALLE = { detallesAdicionales: 1, etiquetas: ETIQUETAS_DETALLE_COMPLETAS };
 
 /**
  * Etiquetas de la tabla de totales de la maqueta de la página 61. La

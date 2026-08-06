@@ -615,11 +615,16 @@ describe('ride: factura conforme al Anexo 2', () => {
     'Fecha Emisión:',
   ];
 
-  /** Encabezados literales de la tabla de detalle (12 columnas de la maqueta). */
+  /**
+   * Encabezados literales de la tabla de detalle (12 columnas de la maqueta).
+   * Los tres primeros van ABREVIADOS: es lo que imprime la página 56, a
+   * diferencia de la nota de crédito (57) y la liquidación de compra (61), que
+   * los escriben enteros (ver `ride-otros.test.ts`).
+   */
   const ENCABEZADOS_DETALLE = [
     'Cod. Principal',
     'Cod. Auxiliar',
-    'Cant',
+    'Cant.',
     'Descripción',
     'Detalle Adicional',
     'Precio Unitario',

@@ -139,7 +139,11 @@ describe('ride: liquidación de compra', () => {
     // Compartidos: razón social, RUC, número de comprobante, clave de acceso.
     expect(texto).toContain('COMERCIAL AMEPHIA S.A.');
     expect(texto).toContain('1790011001001');
-    expect(sinEspacios(texto)).toContain(sinEspacios('LIQUIDACIÓN DE COMPRA'));
+    // Nombre COMPLETO del comprobante, como lo titula la página 61. Se compara
+    // sin espacios porque va con espaciado entre letras Y envuelto en dos
+    // líneas (también en la maqueta): pdfjs entrega cada línea como un
+    // `TextItem` aparte.
+    expect(sinEspacios(texto)).toContain(sinEspacios('LIQUIDACIÓN DE COMPRA DE BIENES Y PRESTACIÓN DE SERVICIOS'));
     expect(texto).toContain('001-001-000000002');
     expect(claveLiquidacionCompra).toHaveLength(49);
     expect(texto).toContain(claveLiquidacionCompra);
@@ -160,6 +164,13 @@ describe('ride: liquidación de compra', () => {
     expect(vecesQueAparece(texto, 'Detalle Adicional')).toBe(1);
     expect(contiene(texto, 'Subsidio')).toBe(true);
     expect(contiene(texto, 'Precio Sin Subsidio')).toBe(true);
+    // Encabezados escritos ENTEROS, como la página 61 — no las abreviaturas
+    // `Cod. Principal` / `Cod. Auxiliar` / `Cant.` de la factura (página 56).
+    for (const encabezado of ['Código', 'Código Auxiliar', 'Cantidad']) {
+      expect(contiene(texto, encabezado), `falta el encabezado "${encabezado}"`).toBe(true);
+    }
+    expect(contiene(texto, 'Cod. Principal')).toBe(false);
+    expect(contiene(texto, 'Cod. Auxiliar')).toBe(false);
     // Cada descripción: prueba que `drawTablaDetalles` renderizó las filas (no
     // solo el encabezado de columnas, que se dibuja siempre). La columna
     // `Descripción` es estrecha y envuelve, así que se compara sin espacios.
@@ -242,6 +253,13 @@ describe('ride: nota de crédito', () => {
     expect(contiene(texto, 'Subsidio')).toBe(false);
     expect(contiene(texto, 'Precio Unitario')).toBe(true);
     expect(contiene(texto, 'Precio Total')).toBe(true);
+    // Encabezados escritos ENTEROS, como la página 57 — no las abreviaturas
+    // de la factura.
+    for (const encabezado of ['Código', 'Código Auxiliar', 'Cantidad']) {
+      expect(contiene(texto, encabezado), `falta el encabezado "${encabezado}"`).toBe(true);
+    }
+    expect(contiene(texto, 'Cod. Principal')).toBe(false);
+    expect(contiene(texto, 'Cod. Auxiliar')).toBe(false);
     for (const detalle of notaCreditoFixture.detalles) {
       // La columna `Descripción` de la maqueta es estrecha, así que una
       // descripción larga se envuelve y pdfjs la extrae partida en varias

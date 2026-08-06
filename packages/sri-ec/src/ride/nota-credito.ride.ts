@@ -7,6 +7,7 @@ import {
   drawComprador,
   drawPie,
   drawTablaDetalles,
+  ETIQUETAS_DETALLE_COMPLETAS,
   formatNumeroComprobante,
   medirBandaSujeto,
   medirCabecera,
@@ -25,11 +26,12 @@ const ESPACIADO_BLOQUE = 10;
 
 /**
  * El detalle de la nota de crédito (maqueta de la página 57) es el de la
- * factura SIN las columnas `Subsidio` / `Precio Sin Subsidio`: `Código`,
- * `Código Auxiliar`, `Cantidad`, `Descripción`, tres `Detalle Adicional`,
- * `Precio Unitario`, `Descuento` y `Precio Total`.
+ * factura SIN las columnas `Subsidio` / `Precio Sin Subsidio` y con los
+ * encabezados escritos enteros: `Código`, `Código Auxiliar`, `Cantidad`,
+ * `Descripción`, tres `Detalle Adicional`, `Precio Unitario`, `Descuento` y
+ * `Precio Total`.
  */
-const OPCIONES_DETALLE = { subsidio: false };
+const OPCIONES_DETALLE = { subsidio: false, etiquetas: ETIQUETAS_DETALLE_COMPLETAS };
 
 /**
  * RIDE de Nota de Crédito (codDoc `04`), conforme a la maqueta de la **página

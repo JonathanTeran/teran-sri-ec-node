@@ -127,7 +127,12 @@ export function nombreDocumento(tipo: TipoComprobante): string {
     case TipoComprobante.Factura:
       return 'FACTURA';
     case TipoComprobante.LiquidacionCompra:
-      return 'LIQUIDACIÓN DE COMPRA';
+      // Nombre COMPLETO del comprobante, como lo titula la maqueta de la
+      // página 61 (donde también ocupa dos líneas). No se abrevia a
+      // "LIQUIDACIÓN DE COMPRA": el rótulo del RIDE es el nombre oficial del
+      // documento. Ver el ajuste de tamaño en `lineasComprobante`, que reparte
+      // este nombre en dos líneas en vez de encogerlo hasta lo ilegible.
+      return 'LIQUIDACIÓN DE COMPRA DE BIENES Y PRESTACIÓN DE SERVICIOS';
     case TipoComprobante.NotaCredito:
       return 'NOTA DE CRÉDITO';
     case TipoComprobante.NotaDebito:
@@ -844,6 +849,72 @@ export function drawComprobante(
   return dibujarCaja(doc, area, lineasComprobante(doc, comprobante, area.width, qr, codigoBarras), { altoMinimo });
 }
 
+/**
+ * Tamaño y espaciado entre letras del nombre del documento: el más grande, de
+ * `TAMANO_TITULO + 3` hacia abajo, con el que el nombre quepa en UNA línea; si
+ * ningún tamaño lo consigue, el más grande con el que quepa en DOS.
+ *
+ * Los dos escalones son deliberados y salen de las maquetas: la mayoría de los
+ * nombres caben en una línea a 12 pt (`F A C T U R A`, `G U Í A  D E
+ * R E M I S I Ó N`) y `COMPROBANTE DE RETENCIÓN` lo consigue encogiendo un
+ * poco; pero `LIQUIDACIÓN DE COMPRA DE BIENES Y PRESTACIÓN DE SERVICIOS` no
+ * cabe en una línea a NINGÚN tamaño legible (250.9 pt a 7.5 pt contra 246.3 pt
+ * de caja) y la propia maqueta de la página 61 lo imprime en dos. Sin el
+ * segundo escalón, el bucle lo encogía hasta el mínimo (7.5 pt, más pequeño
+ * que el cuerpo del RIDE) y ADEMÁS lo envolvía.
+ *
+ * El espaciado entre letras baja a la par que el tamaño: en un nombre largo,
+ * mantenerlo lo obligaría a encoger mucho más.
+ *
+ * La condición se mide con `heightOfString` y NO con `widthOfString`: es lo que
+ * usa el `LineWrapper` de pdfkit al dibujar, así que medir y dibujar no pueden
+ * discrepar. Con `widthOfString` sí discrepaban por unas décimas
+ * —`COMPROBANTE DE RETENCIÓN` medía 246.24 pt contra 246.28 pt de caja, así que
+ * el bucle lo daba por bueno a 12 pt y luego pdfkit lo partía en dos líneas—:
+ * el ancho de una cadena con `characterSpacing` incluye el espaciado del
+ * ÚLTIMO carácter, que al envolver no cuenta.
+ *
+ * Deja `doc` con la fuente y el tamaño elegidos.
+ */
+function ajustarNombreDocumento(
+  doc: PDFKit.PDFDocument,
+  nombre: string,
+  anchoCaja: number,
+): { tamano: number; espaciado: number } {
+  const TAMANO_MAX = TAMANO_TITULO + 3;
+  const ESPACIADO_MAX = 2.5;
+
+  /** Líneas que ocuparía `nombre` al tamaño/espaciado actuales. */
+  const lineas = (espaciado: number): number => {
+    const alto = doc.heightOfString(nombre, { width: anchoCaja, characterSpacing: espaciado });
+    // Alto de UNA línea al tamaño actual, medido con la MISMA función: usar
+    // `currentLineHeight()` no vale, porque `heightOfString` suma además el
+    // `lineGap` del documento y la diferencia bastaba para dar toda cadena por
+    // envuelta (y encoger el nombre hasta el mínimo).
+    return Math.max(1, Math.round(alto / doc.heightOfString('X', { width: anchoCaja })));
+  };
+
+  doc.font(FUENTE_NEGRITA);
+  for (const maxLineas of [1, 2]) {
+    let tamano = TAMANO_MAX;
+    let espaciado = ESPACIADO_MAX;
+    while (tamano > TAMANO_TABLA) {
+      doc.fontSize(tamano);
+      if (lineas(espaciado) <= maxLineas) {
+        return { tamano, espaciado };
+      }
+      tamano -= 0.5;
+      espaciado = Math.max(0, espaciado - 0.35);
+    }
+  }
+
+  // Ni en dos líneas al mínimo: se deja el mínimo y pdfkit lo envuelve en las
+  // que necesite. La caja lo absorbe (el alto sale de `medirCaja`, que mide
+  // esta misma línea), así que no desborda ni pierde texto.
+  doc.fontSize(TAMANO_TABLA);
+  return { tamano: TAMANO_TABLA, espaciado: 0 };
+}
+
 /** Lado del QR de la clave de acceso dentro del bloque comprobante. */
 const QR_LADO = 85;
 
@@ -875,39 +946,11 @@ function lineasComprobante(
 ): LineaCaja[] {
   const anchoCaja = anchoArea - PADDING_CAJA * 2;
 
-  // Reduce el tamaño hasta que el nombre del documento quepa en una sola
-  // línea (gap de Task 2, expuesto por los nombres largos de los otros 5
-  // comprobantes: "LIQUIDACIÓN DE COMPRA DE BIENES Y PRESTACIÓN DE SERVICIOS"
-  // no cabe al tamaño máximo). El espaciado entre letras se reduce a la vez:
-  // en un nombre largo, mantenerlo lo obligaría a encoger mucho más.
-  const TAMANO_NOMBRE_DOC_MAX = TAMANO_TITULO + 3;
-  let tamanoNombreDoc = TAMANO_NOMBRE_DOC_MAX;
-  let espaciadoNombreDoc = 2.5;
-  doc.font(FUENTE_NEGRITA).fontSize(tamanoNombreDoc);
-
-  // La condición se mide con `heightOfString` y NO con `widthOfString`: es lo
-  // que usa el `LineWrapper` de pdfkit al dibujar, así que medir y dibujar no
-  // pueden discrepar. Con `widthOfString` sí discrepaban por unas décimas
-  // —`COMPROBANTE DE RETENCIÓN` medía 246.24 pt contra 246.28 pt de caja, así
-  // que el bucle lo daba por bueno a 12 pt y luego pdfkit lo partía en dos
-  // líneas—: el ancho de una cadena con `characterSpacing` incluye el
-  // espaciado del ÚLTIMO carácter, que al envolver no cuenta.
-  const enUnaLinea = (): boolean =>
-    doc.heightOfString(comprobante.nombreDocumento, {
-      width: anchoCaja,
-      characterSpacing: espaciadoNombreDoc,
-    }) <=
-    // Alto de UNA línea al tamaño actual, medido con la misma función: usar
-    // `currentLineHeight()` no vale, porque `heightOfString` suma además el
-    // `lineGap` del documento y la diferencia bastaba para dar toda cadena por
-    // envuelta (y encoger el nombre hasta el mínimo).
-    doc.heightOfString('X', { width: anchoCaja }) + 0.5;
-
-  while (!enUnaLinea() && tamanoNombreDoc > TAMANO_TABLA) {
-    tamanoNombreDoc -= 0.5;
-    espaciadoNombreDoc = Math.max(0, espaciadoNombreDoc - 0.35);
-    doc.fontSize(tamanoNombreDoc);
-  }
+  const { tamano: tamanoNombreDoc, espaciado: espaciadoNombreDoc } = ajustarNombreDocumento(
+    doc,
+    comprobante.nombreDocumento,
+    anchoCaja,
+  );
 
   const lineas: LineaCaja[] = [
     filaEtiquetaValor(anchoCaja, 'R.U.C.:', comprobante.ruc, 0.3, { tamano: TAMANO_TITULO }),
@@ -1028,7 +1071,16 @@ export function drawCabecera(doc: PDFKit.PDFDocument, cabecera: CabeceraRide, ar
   const alto = Math.max(altoIzquierda, altoDerecha);
 
   const y = asegurarEspacio(doc, area.y, alto);
-  const abajoIzquierda = drawEmisor(doc, cabecera.emisor, { x: area.x, y, width: anchoIzquierda }, alto);
+
+  // La caja del emisor solo se estira a la altura de la del comprobante cuando
+  // HAY logo. En la maqueta, lo que llena la columna izquierda es la imagen del
+  // contribuyente: sin ella, igualar las alturas dibujaba un rectángulo enorme
+  // con dos líneas de texto y un palmo de blanco debajo. Sin logo se ajusta a
+  // su contenido; la caja del comprobante conserva `altoMinimo` en los dos
+  // casos, así que si el emisor trae muchos campos opcionales y resulta ser la
+  // más alta, siguen cerrando parejas.
+  const altoMinimoEmisor = cabecera.emisor.logo ? alto : undefined;
+  const abajoIzquierda = drawEmisor(doc, cabecera.emisor, { x: area.x, y, width: anchoIzquierda }, altoMinimoEmisor);
   const abajoDerecha = drawComprobante(
     doc,
     cabecera.comprobante,
@@ -1307,10 +1359,11 @@ export function construirColumnas(
  */
 function especificacionDetalle(opciones: OpcionesTablaDetalles): Array<[string, number, 'left' | 'center' | 'right']> {
   const columnasExtra = opciones.detallesAdicionales ?? MAX_DETALLES_ADICIONALES;
+  const etiquetas = { ...ETIQUETAS_DETALLE_FACTURA, ...opciones.etiquetas };
   const specs: Array<[string, number, 'left' | 'center' | 'right']> = [
-    ['Cod. Principal', 8.5, 'left'],
-    ['Cod. Auxiliar', 7.5, 'left'],
-    ['Cant', 6.5, 'right'],
+    [etiquetas.codigoPrincipal, 8.5, 'left'],
+    [etiquetas.codigoAuxiliar, 7.5, 'left'],
+    [etiquetas.cantidad, 6.5, 'right'],
     ['Descripción', 18.5, 'left'],
   ];
   for (let i = 0; i < columnasExtra; i++) {
@@ -1337,6 +1390,42 @@ const MAX_DETALLES_ADICIONALES = 3;
  */
 const TAMANO_DETALLE = 6.5;
 
+/**
+ * Encabezados de las tres primeras columnas del detalle, que cada maqueta del
+ * Anexo 2 redacta a su manera: la factura (página 56) los abrevia
+ * (`Cod. Principal` / `Cod. Auxiliar` / `Cant.`) y la nota de crédito (57) y
+ * la liquidación de compra (61) los escriben enteros (`Código` / `Código
+ * Auxiliar` / `Cantidad`). No es una diferencia de espacio disponible — la
+ * factura tiene 12 columnas y las otras 11 y 10 —, es literalmente lo que
+ * imprime cada página.
+ */
+export interface EtiquetasDetalle {
+  codigoPrincipal: string;
+  codigoAuxiliar: string;
+  cantidad: string;
+}
+
+/** Encabezados abreviados de la maqueta de la factura (página 56), los de por defecto. */
+const ETIQUETAS_DETALLE_FACTURA: EtiquetasDetalle = {
+  codigoPrincipal: 'Cod. Principal',
+  codigoAuxiliar: 'Cod. Auxiliar',
+  cantidad: 'Cant.',
+};
+
+/**
+ * Encabezados completos de las maquetas de la nota de crédito (página 57) y de
+ * la liquidación de compra (página 61). Comprobado que las tres palabras
+ * indivisibles caben en su columna a {@link TAMANO_DETALLE}: `Código` 22.4 pt
+ * de 45 útiles, `Auxiliar` 23.6 de 39 y `Cantidad` 27.8 de 33 — `Código
+ * Auxiliar` envuelve a dos líneas, igual que en la maqueta, pero ninguna
+ * PALABRA se parte a la mitad (que es la garantía que importa).
+ */
+export const ETIQUETAS_DETALLE_COMPLETAS: EtiquetasDetalle = {
+  codigoPrincipal: 'Código',
+  codigoAuxiliar: 'Código Auxiliar',
+  cantidad: 'Cantidad',
+};
+
 /** Ajustes del detalle por tipo de comprobante (ver las maquetas del Anexo 2). */
 export interface OpcionesTablaDetalles {
   /**
@@ -1351,6 +1440,11 @@ export interface OpcionesTablaDetalles {
    * @default true
    */
   subsidio?: boolean;
+  /**
+   * Encabezados de las tres primeras columnas. Sin esto se usan los abreviados
+   * de la factura. Ver {@link ETIQUETAS_DETALLE_COMPLETAS}.
+   */
+  etiquetas?: Partial<EtiquetasDetalle>;
 }
 
 /**
